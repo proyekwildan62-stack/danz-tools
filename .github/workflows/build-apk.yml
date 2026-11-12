@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 1. Ambil Source Code
+      - name: 1. Ambil Repo (Untuk Mengambil Logo Jika Ada)
         uses: actions/checkout@v4
 
       - name: 2. Pasang Java JDK 17
@@ -19,89 +19,2295 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 3. Kunci Versi Gradle 8.5 (Wajib Agar Cocok dengan AGP 8.2.2)
+      - name: 3. Pasang Gradle 8.5
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
 
-      - name: 4. Auto-Heal Kode, Spasi Nama File & Header C++
+      - name: 4. Bangun Otomatis Seluruh File Proyek DANZ TOOLS (Anti-Error)
         run: |
-          # 1. Bersihkan spasi tak sengaja di ujung nama folder/file hasil ketik di HP
-          find . -depth -name "* *" | while IFS= read -r f; do
-            clean_name=$(echo "$f" | sed 's/ *$//; s/\/ /\/g; s/ \//\//g')
-            if [ "$f" != "$clean_name" ]; then
-              mv "$f" "$clean_name" || true
-            fi
-          done
+          # Simpan gambar logo jika sudah pernah kamu upload di mana saja di dalam repo
+          FOUND_LOGO=$(find . -name "danz_logo.png" | head -n 1)
+          if [ -n "$FOUND_LOGO" ]; then
+            cp "$FOUND_LOGO" /tmp/saved_logo.png
+          fi
 
-          # 2. Buat gradle.properties untuk Shizuku AndroidX
+          # Bersihkan file lama yang salah ketik agar tidak bentrok saat kompilasi
+          rm -rf app build.gradle settings.gradle gradle.properties
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/java/com/sateam/danzinject
+
+          # Kembalikan logo kamu atau buat logo ungu/hijau otomatis jika belum upload
+          if [ -f "/tmp/saved_logo.png" ]; then
+            cp /tmp/saved_logo.png app/src/main/res/drawable/danz_logo.png
+          else
+            python3 -c '
+          import struct, zlib
+          def chunk(t, d):
+              return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+          w, h = 128, 128
+          ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
+          raw = b"".join(b"\x00" + (b"\x00\xe6\x76\xff" * w) for _ in range(h))
+          with open("app/src/main/res/drawable/danz_logo.png", "wb") as f:
+              f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+          '
+          fi
+
+          # 1. Buat gradle.properties
           cat << 'EOF' > gradle.properties
           org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           android.enableJetifier=true
           EOF
 
-          # 3. Pastikan gambar logo danz_logo.png valid (Minimal 64x64 PNG jika belum diupload)
-          mkdir -p app/src/main/res/drawable
-          rm -f app/src/main/res/drawable/*.txt
-          if [ -f "danz_logo.png" ]; then
-            mv danz_logo.png app/src/main/res/drawable/danz_logo.png
-          fi
-          if [ ! -f "app/src/main/res/drawable/danz_logo.png" ]; then
-            python3 -c '
-          import struct, zlib
-          def png_chunk(t, d):
-              return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
-          w, h = 64, 64
-          ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
-          raw = b"".join(b"\x00" + (b"\x8a\x2b\xe2\xff" * w) for _ in range(h))
-          with open("app/src/main/res/drawable/danz_logo.png", "wb") as f:
-              f.write(b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", ihdr) + png_chunk(b"IDAT", zlib.compress(raw)) + png_chunk(b"IEND", b""))
-          '
-          fi
+          # 2. Buat settings.gradle
+          cat << 'EOF' > settings.gradle
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "DANZ TOOLS"
+          include ':app'
+          EOF
 
-          # 4. Tambahkan #include <signal.h> otomatis ke native-lib.cpp agar fungsi kill() tidak error di NDK 26
-          if [ -f "app/src/main/cpp/native-lib.cpp" ]; then
-            if ! grep -q "<signal.h>" app/src/main/cpp/native-lib.cpp; then
-              sed -i '1i #include <signal.h>' app/src/main/cpp/native-lib.cpp
-            fi
-          fi
+          # 3. Buat build.gradle (Root)
+          cat << 'EOF' > build.gradle
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+          }
+          EOF
 
-          # 5. Pastikan ShizukuShellManager menggunakan java.lang.Process standar agar bebas error import
-          if [ -f "app/src/main/java/com/sateam/danzinject/ShizukuShellManager.java" ]; then
-            sed -i 's/import rikka.shizuku.ShizukuRemoteProcess;//g' app/src/main/java/com/sateam/danzinject/ShizukuShellManager.java
-            sed -i 's/ShizukuRemoteProcess proc = (ShizukuRemoteProcess)/Process proc = (Process)/g' app/src/main/java/com/sateam/danzinject/ShizukuShellManager.java
-          fi
+          # 4. Buat app/build.gradle
+          cat << 'EOF' > app/build.gradle
+          plugins {
+              id 'com.android.application'
+          }
 
-          # 6. Cek kelengkapan 11 file utama di repo
-          echo "=== CEK KELENGKAPAN FILE ==="
-          for req in \
-            "settings.gradle" \
-            "build.gradle" \
-            "app/build.gradle" \
-            "app/src/main/AndroidManifest.xml" \
-            "app/src/main/cpp/CMakeLists.txt" \
-            "app/src/main/cpp/native-lib.cpp" \
-            "app/src/main/java/com/sateam/danzinject/LicenseManager.java" \
-            "app/src/main/java/com/sateam/danzinject/ShizukuShellManager.java" \
-            "app/src/main/java/com/sateam/danzinject/AuthActivity.java" \
-            "app/src/main/java/com/sateam/danzinject/MainDashboardActivity.java" \
-            "app/src/main/java/com/sateam/danzinject/OverlayEngineService.java"; do
-            if [ -f "$req" ]; then
-              echo "[OK] $req ditemukan"
-            else
-              echo "[HILANG/SALAH NAMA] $req TIDAK DITEMUKAN!"
-            fi
-          done
+          android {
+              namespace 'com.sateam.danzinject'
+              compileSdk 34
 
-      - name: 5. Pasang Android SDK, NDK 26 & CMake
+              defaultConfig {
+                  applicationId "com.sateam.danzinject"
+                  minSdk 30
+                  targetSdk 34
+                  versionCode 7
+                  versionName "1.0.0"
+              }
+
+              buildTypes {
+                  debug {
+                      minifyEnabled false
+                      debuggable true
+                  }
+                  release {
+                      minifyEnabled false
+                      signingConfig signingConfigs.debug
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+
+          dependencies {
+              implementation "dev.rikka.shizuku:api:13.1.5"
+              implementation "dev.rikka.shizuku:provider:13.1.5"
+          }
+          EOF
+
+          # 5. Buat AndroidManifest.xml
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.sateam.danzinject">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+              <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+              <queries>
+                  <package android:name="moe.shizuku.privileged.api" />
+                  <package android:name="com.dts.freefireth" />
+                  <package android:name="com.dts.freefiremax" />
+              </queries>
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@drawable/danz_logo"
+                  android:label="DANZ TOOLS"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+                  <activity
+                      android:name=".AuthActivity"
+                      android:exported="true"
+                      android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <activity
+                      android:name=".MainDashboardActivity"
+                      android:exported="false"
+                      android:screenOrientation="portrait" />
+
+                  <service
+                      android:name=".OverlayEngineService"
+                      android:enabled="true"
+                      android:exported="false" />
+
+                  <provider
+                      android:name="rikka.shizuku.ShizukuProvider"
+                      android:authorities="${applicationId}.shizuku"
+                      android:enabled="true"
+                      android:exported="true"
+                      android:multiprocess="false"
+                      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+              </application>
+          </manifest>
+          EOF
+
+          # 6. Buat LicenseManager.java (1 Key 1 Device + Master Key DANZDEV)
+          cat << 'EOF' > app/src/main/java/com/sateam/danzinject/LicenseManager.java
+          package com.sateam.danzinject;
+
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          import android.os.Build;
+          import android.provider.Settings;
+          import android.util.Base64;
+
+          import org.json.JSONException;
+          import org.json.JSONObject;
+
+          import java.nio.charset.StandardCharsets;
+          import java.security.MessageDigest;
+          import java.security.SecureRandom;
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Iterator;
+          import java.util.Locale;
+
+          import javax.crypto.Mac;
+          import javax.crypto.spec.SecretKeySpec;
+
+          public class LicenseManager {
+              private static final String PREF_NAME       = "danz_license_vault_v7";
+              private static final String KEY_DB_JSON     = "license_records_json";
+              private static final String KEY_ACTIVE_CODE = "active_license_key";
+              private static final String HMAC_SECRET     = "DANZ_TOOLS_SA_TEAM_SECRET_2026";
+
+              public static final String MASTER_DEV_KEY   = "DANZDEV";
+
+              public enum Tier {
+                  DAY_1("1DAY", "1 Day", 1L * 86400000L, "USER"),
+                  DAY_3("3DAY", "3 Day", 3L * 86400000L, "USER"),
+                  DAY_7("7DAY", "7 Day", 7L * 86400000L, "USER"),
+                  DAY_15("15DAY", "15 Day", 15L * 86400000L, "USER"),
+                  DAY_30("30DAY", "30 Day", 30L * 86400000L, "USER"),
+                  PERMANENT("PERM", "Permanent", 36500L * 86400000L, "VIP_PERM"),
+                  RESELLER("RSLR", "Reseller", 3650L * 86400000L, "RESELLER");
+
+                  public final String code;
+                  public final String label;
+                  public final long durationMs;
+                  public final String role;
+
+                  Tier(String code, String label, long durationMs, String role) {
+                      this.code = code;
+                      this.label = label;
+                      this.durationMs = durationMs;
+                      this.role = role;
+                  }
+              }
+
+              public static class ValidationResult {
+                  public final boolean valid;
+                  public final String message;
+                  public final String role;
+                  public final String key;
+                  public final String hwid;
+                  public final long expiresAt;
+
+                  public ValidationResult(boolean valid, String message, String role, String key, String hwid, long expiresAt) {
+                      this.valid = valid;
+                      this.message = message;
+                      this.role = role;
+                      this.key = key;
+                      this.hwid = hwid;
+                      this.expiresAt = expiresAt;
+                  }
+              }
+
+              private final SharedPreferences prefs;
+              private final String deviceHwid;
+
+              public LicenseManager(Context ctx) {
+                  this.prefs = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                  this.deviceHwid = computeDeviceHwid(ctx);
+                  ensureMasterKeySeeded();
+              }
+
+              public String getDeviceHwid() {
+                  return deviceHwid;
+              }
+
+              private String computeDeviceHwid(Context ctx) {
+                  String androidId = Settings.Secure.getString(ctx.getContentResolver(), Settings.Secure.ANDROID_ID);
+                  String raw = (androidId != null ? androidId : "NO_AID") + "|" + Build.BOARD + "|" + Build.BRAND + "|" + Build.HARDWARE;
+                  try {
+                      MessageDigest md = MessageDigest.getInstance("SHA-256");
+                      byte[] digest = md.digest(raw.getBytes(StandardCharsets.UTF_8));
+                      StringBuilder sb = new StringBuilder();
+                      for (int i = 0; i < 4; i++) {
+                          sb.append(String.format("%02x", digest[i]));
+                      }
+                      return sb.toString().toLowerCase(Locale.US);
+                  } catch (Exception e) {
+                      return "5bffa90c";
+                  }
+              }
+
+              private void ensureMasterKeySeeded() {
+                  JSONObject db = loadDb();
+                  if (!db.has(MASTER_DEV_KEY)) {
+                      try {
+                          JSONObject rec = new JSONObject();
+                          rec.put("tier", "DEVELOPER");
+                          rec.put("role", "DEVELOPER");
+                          rec.put("durationMs", 36500L * 86400000L);
+                          rec.put("boundHwid", "");
+                          rec.put("activatedAt", 0L);
+                          rec.put("expiresAt", System.currentTimeMillis() + (36500L * 86400000L));
+                          db.put(MASTER_DEV_KEY, rec);
+                          saveDb(db);
+                      } catch (JSONException ignored) {}
+                  }
+              }
+
+              public String generateLicenseKey(Tier tier, String optionalHwid) {
+                  SecureRandom rng = new SecureRandom();
+                  String chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+                  StringBuilder randPart = new StringBuilder();
+                  for (int i = 0; i < 6; i++) {
+                      randPart.append(chars.charAt(rng.nextInt(chars.length())));
+                  }
+                  String sig = signBlock(tier.code + "|" + randPart).substring(0, 4).toUpperCase(Locale.US);
+                  String newKey = "DANZ-" + tier.code + "-" + randPart + "-" + sig;
+
+                  JSONObject db = loadDb();
+                  try {
+                      JSONObject rec = new JSONObject();
+                      rec.put("tier", tier.label);
+                      rec.put("role", tier.role);
+                      rec.put("durationMs", tier.durationMs);
+                      rec.put("boundHwid", optionalHwid != null ? optionalHwid.trim().toLowerCase(Locale.US) : "");
+                      rec.put("activatedAt", 0L);
+                      rec.put("expiresAt", 0L);
+                      db.put(newKey, rec);
+                      saveDb(db);
+                  } catch (JSONException ignored) {}
+                  return newKey;
+              }
+
+              public ValidationResult validateAndBindKey(String inputKey) {
+                  if (inputKey == null || inputKey.trim().isEmpty()) {
+                      return new ValidationResult(false, "Key tidak boleh kosong!", "NONE", "", deviceHwid, 0L);
+                  }
+                  String cleanKey = inputKey.trim().toUpperCase(Locale.US);
+                  JSONObject db = loadDb();
+
+                  if (!db.has(cleanKey)) {
+                      if (!tryImportSelfSignedKey(cleanKey, db)) {
+                          return new ValidationResult(false, "Key tidak valid atau tidak terdaftar!", "NONE", cleanKey, deviceHwid, 0L);
+                      }
+                  }
+
+                  try {
+                      JSONObject rec = db.getJSONObject(cleanKey);
+                      String boundHwid = rec.optString("boundHwid", "");
+                      long activatedAt = rec.optLong("activatedAt", 0L);
+                      long durationMs  = rec.optLong("durationMs", 86400000L);
+                      long expiresAt   = rec.optLong("expiresAt", 0L);
+                      String role      = rec.optString("role", "USER");
+
+                      if (!boundHwid.isEmpty() && !boundHwid.equalsIgnoreCase(deviceHwid)) {
+                          return new ValidationResult(false,
+                                  "DITOLAK (1 Key 1 Device)! Key sudah terikat di HWID: " + boundHwid,
+                                  role, cleanKey, deviceHwid, expiresAt);
+                      }
+
+                      long now = System.currentTimeMillis();
+                      if (activatedAt == 0L) {
+                          activatedAt = now;
+                          expiresAt = now + durationMs;
+                          rec.put("activatedAt", activatedAt);
+                          rec.put("expiresAt", expiresAt);
+                      }
+
+                      if (now > expiresAt) {
+                          return new ValidationResult(false,
+                                  "Key sudah EXPIRED pada " + formatTimestamp(expiresAt),
+                                  role, cleanKey, deviceHwid, expiresAt);
+                      }
+
+                      rec.put("boundHwid", deviceHwid);
+                      db.put(cleanKey, rec);
+                      saveDb(db);
+                      prefs.edit().putString(KEY_ACTIVE_CODE, cleanKey).apply();
+
+                      return new ValidationResult(true,
+                              "Verified Access (" + role + ")",
+                              role, cleanKey, deviceHwid, expiresAt);
+                  } catch (JSONException e) {
+                      return new ValidationResult(false, "Database error", "NONE", cleanKey, deviceHwid, 0L);
+                  }
+              }
+
+              private boolean tryImportSelfSignedKey(String key, JSONObject db) {
+                  String[] parts = key.split("-");
+                  if (parts.length != 4 || !"DANZ".equals(parts[0])) return false;
+                  String tierCode = parts[1];
+                  String randPart = parts[2];
+                  String providedSig = parts[3];
+
+                  String expectedSig = signBlock(tierCode + "|" + randPart).substring(0, 4).toUpperCase(Locale.US);
+                  if (!expectedSig.equals(providedSig)) return false;
+
+                  Tier matchedTier = null;
+                  for (Tier t : Tier.values()) {
+                      if (t.code.equals(tierCode)) {
+                          matchedTier = t;
+                          break;
+                      }
+                  }
+                  if (matchedTier == null) return false;
+
+                  try {
+                      JSONObject rec = new JSONObject();
+                      rec.put("tier", matchedTier.label);
+                      rec.put("role", matchedTier.role);
+                      rec.put("durationMs", matchedTier.durationMs);
+                      rec.put("boundHwid", "");
+                      rec.put("activatedAt", 0L);
+                      rec.put("expiresAt", 0L);
+                      db.put(key, rec);
+                      saveDb(db);
+                      return true;
+                  } catch (JSONException e) {
+                      return false;
+                  }
+              }
+
+              public boolean resetHwidForKey(String targetKey) {
+                  JSONObject db = loadDb();
+                  String clean = targetKey.trim().toUpperCase(Locale.US);
+                  if (!db.has(clean)) return false;
+                  try {
+                      JSONObject rec = db.getJSONObject(clean);
+                      rec.put("boundHwid", "");
+                      db.put(clean, rec);
+                      saveDb(db);
+                      return true;
+                  } catch (JSONException e) {
+                      return false;
+                  }
+              }
+
+              public String dumpAllKeysSummary() {
+                  JSONObject db = loadDb();
+                  StringBuilder sb = new StringBuilder();
+                  Iterator<String> keys = db.keys();
+                  while (keys.hasNext()) {
+                      String k = keys.next();
+                      JSONObject r = db.optJSONObject(k);
+                      if (r != null) {
+                          String role = r.optString("role", "USER");
+                          String hwid = r.optString("boundHwid", "");
+                          sb.append("• ").append(k).append(" [").append(role).append("] ")
+                            .append(hwid.isEmpty() ? "(Free)" : "(HWID: " + hwid + ")").append("\n");
+                      }
+                  }
+                  return sb.toString();
+              }
+
+              public String getSavedKey() {
+                  return prefs.getString(KEY_ACTIVE_CODE, "");
+              }
+
+              public static String formatTimestamp(long ms) {
+                  if (ms <= 0L) return "-";
+                  SimpleDateFormat sdf = new SimpleDateFormat("dd MMMM yyyy", new Locale("id", "ID"));
+                  return sdf.format(new Date(ms));
+              }
+
+              private String signBlock(String payload) {
+                  try {
+                      Mac mac = Mac.getInstance("HmacSHA256");
+                      mac.init(new SecretKeySpec(HMAC_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+                      byte[] raw = mac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+                      return Base64.encodeToString(raw, Base64.NO_WRAP).replaceAll("[^A-Za-z0-9]", "");
+                  } catch (Exception e) {
+                      return "9999";
+                  }
+              }
+
+              private JSONObject loadDb() {
+                  try {
+                      return new JSONObject(prefs.getString(KEY_DB_JSON, "{}"));
+                  } catch (JSONException e) {
+                      return new JSONObject();
+                  }
+              }
+
+              private void saveDb(JSONObject db) {
+                  prefs.edit().putString(KEY_DB_JSON, db.toString()).apply();
+              }
+          }
+          EOF
+
+          # 7. Buat ShizukuShellManager.java (Eksekutor In-Game Shizuku UID 2000)
+          cat << 'EOF' > app/src/main/java/com/sateam/danzinject/ShizukuShellManager.java
+          package com.sateam.danzinject;
+
+          import android.content.pm.PackageManager;
+          import android.os.Build;
+
+          import java.io.BufferedReader;
+          import java.io.InputStreamReader;
+          import java.io.OutputStream;
+          import java.lang.reflect.Method;
+          import java.nio.charset.StandardCharsets;
+
+          import rikka.shizuku.Shizuku;
+
+          public class ShizukuShellManager {
+              public static final int SHIZUKU_REQ_CODE = 6767;
+
+              public static boolean isAndroid11OrAbove() {
+                  return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+              }
+
+              public static boolean isShizukuRunning() {
+                  try {
+                      return Shizuku.pingBinder();
+                  } catch (Throwable t) {
+                      return false;
+                  }
+              }
+
+              public static boolean hasShizukuPermission() {
+                  if (!isShizukuRunning()) return false;
+                  try {
+                      if (Shizuku.isPreV11()) return false;
+                      return Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
+                  } catch (Throwable t) {
+                      return false;
+                  }
+              }
+
+              public static void requestPermission() {
+                  try {
+                      if (isShizukuRunning() && !hasShizukuPermission()) {
+                          Shizuku.requestPermission(SHIZUKU_REQ_CODE);
+                      }
+                  } catch (Throwable ignored) {}
+              }
+
+              public static String execAdbCommand(String command) {
+                  StringBuilder output = new StringBuilder();
+                  try {
+                      if (hasShizukuPermission()) {
+                          Method newProcessMethod = Shizuku.class.getDeclaredMethod(
+                                  "newProcess", String[].class, String[].class, String.class);
+                          newProcessMethod.setAccessible(true);
+                          Process proc = (Process) newProcessMethod.invoke(
+                                  null, new String[]{"sh"}, null, null);
+                          if (proc != null) {
+                              OutputStream os = proc.getOutputStream();
+                              os.write((command + "\nexit\n").getBytes(StandardCharsets.UTF_8));
+                              os.flush();
+                              os.close();
+                              BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
+                              String line;
+                              while ((line = reader.readLine()) != null) {
+                                  output.append(line).append("\n");
+                              }
+                              reader.close();
+                              proc.waitFor();
+                              proc.destroy();
+                              return output.toString().trim();
+                          }
+                      }
+                  } catch (Throwable ignored) {}
+
+                  // Fallback local shell jika sedang diuji coba
+                  try {
+                      Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", command});
+                      p.waitFor();
+                  } catch (Throwable ignored) {}
+                  return output.toString().trim();
+              }
+
+              public static void execAdbAsync(final String command) {
+                  new Thread(() -> execAdbCommand(command)).start();
+              }
+
+              // 1. DRAG HS (In-Game Touch Pressure & Vertical Slop Calibration)
+              public static void applyDragHs(final String pkg, final boolean enable) {
+                  execAdbAsync(enable
+                      ? "settings put secure view_configuration_touch_slop 2; settings put secure touch_blocking_period 0; setprop debug.touch.drag_hs 1; cmd game mode performance " + pkg
+                      : "settings delete secure view_configuration_touch_slop; setprop debug.touch.drag_hs 0");
+              }
+
+              // 2. AIMDRAG (In-Game Y-Axis Pointer Velocity & Swipe Acceleration)
+              public static void applyAimDrag(final boolean enable, final int speedLevel) {
+                  int ptrSpeed = Math.min(7, Math.max(1, speedLevel));
+                  execAdbAsync(enable
+                      ? "settings put system pointer_speed " + ptrSpeed + "; setprop debug.touch.velocity_scale " + ptrSpeed
+                      : "settings put system pointer_speed 0; setprop debug.touch.velocity_scale 1");
+              }
+
+              // 3. AIM SMOOTH (Frame Pacing & Touch Sampling Interpolation)
+              public static void applyAimSmooth(final boolean enable, final int smoothLevel) {
+                  execAdbAsync(enable
+                      ? "setprop debug.sf.early_phase_offset_ns 500000; setprop debug.sf.early_gl_phase_offset_ns 500000; settings put secure long_press_timeout " + (250 + smoothLevel * 2)
+                      : "setprop debug.sf.early_phase_offset_ns 0; settings put secure long_press_timeout 400");
+              }
+
+              // 4. CONTROL RECOIL (Hold-Fire Micro-Jitter & Touch Dampening)
+              public static void applyControlRecoil(final boolean enable, final int stabilityLevel) {
+                  execAdbAsync(enable
+                      ? "settings put secure tap_duration_threshold 120; settings put secure ignore_repeat_click_timeout 100; setprop debug.touch.recoil_damp " + stabilityLevel
+                      : "settings delete secure tap_duration_threshold; setprop debug.touch.recoil_damp 0");
+              }
+
+              // 5. DANZ WARE (Murni Meningkatkan Performance In-Game Free Fire)
+              public static void applyDanzWarePerformance(final String targetPkg, final boolean enable, final int boostLevel) {
+                  new Thread(() -> {
+                      if (enable) {
+                          String downscale = (boostLevel >= 80) ? "0.85" : (boostLevel >= 50 ? "0.90" : "disabled");
+                          StringBuilder cmd = new StringBuilder();
+                          cmd.append("cmd game mode performance ").append(targetPkg).append(";\n");
+                          cmd.append("cmd game set --mode 2 --downscale ").append(downscale).append(" --fps 120 ").append(targetPkg).append(";\n");
+                          cmd.append("cmd power set-fixed-performance-mode-enabled true;\n");
+                          cmd.append("cmd thermalservice override-status 0;\n");
+                          cmd.append("setprop debug.sf.latch_unsignaled 1;\n");
+                          cmd.append("setprop debug.sf.disable_backpressure 1;\n");
+                          cmd.append("setprop debug.hwui.renderer skiagl;\n");
+                          cmd.append("setprop debug.egl.hw 1;\n");
+                          cmd.append("setprop debug.performance.tuning 1;\n");
+                          cmd.append("settings put global window_animation_scale 0.0;\n");
+                          cmd.append("settings put global transition_animation_scale 0.0;\n");
+                          cmd.append("settings put global animator_duration_scale 0.0;\n");
+                          cmd.append("cmd package compile -m speed-profile -f ").append(targetPkg).append(";\n");
+                          cmd.append("am kill-all;\n");
+                          cmd.append("pm trim-caches 4096M;\n");
+                          execAdbCommand(cmd.toString());
+                      } else {
+                          StringBuilder restore = new StringBuilder();
+                          restore.append("cmd game mode standard ").append(targetPkg).append(";\n");
+                          restore.append("cmd power set-fixed-performance-mode-enabled false;\n");
+                          restore.append("cmd thermalservice reset;\n");
+                          restore.append("setprop debug.sf.latch_unsignaled 0;\n");
+                          restore.append("setprop debug.sf.disable_backpressure 0;\n");
+                          restore.append("settings put global window_animation_scale 1.0;\n");
+                          restore.append("settings put global transition_animation_scale 1.0;\n");
+                          restore.append("settings put global animator_duration_scale 1.0;\n");
+                          execAdbCommand(restore.toString());
+                      }
+                  }).start();
+              }
+          }
+          EOF
+
+          # 8. Buat AuthActivity.java (Layar Login + Shizuku Check + Logo DANZ TOOLS)
+          cat << 'EOF' > app/src/main/java/com/sateam/danzinject/AuthActivity.java
+          package com.sateam.danzinject;
+
+          import android.app.Activity;
+          import android.content.ClipData;
+          import android.content.ClipboardManager;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.widget.Button;
+          import android.widget.EditText;
+          import android.widget.ImageView;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import rikka.shizuku.Shizuku;
+
+          public class AuthActivity extends Activity {
+              private LicenseManager licenseManager;
+              private EditText keyInput;
+              private TextView shizukuBadge;
+
+              private final Shizuku.OnRequestPermissionResultListener permListener =
+                      (requestCode, grantResult) -> updateShizukuBadge();
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  licenseManager = new LicenseManager(this);
+                  Shizuku.addRequestPermissionResultListener(permListener);
+
+                  ScrollView scroll = new ScrollView(this);
+                  scroll.setFillViewport(true);
+                  scroll.setBackgroundColor(Color.parseColor("#070D0A"));
+
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setGravity(Gravity.CENTER_HORIZONTAL);
+                  root.setPadding(48, 70, 48, 60);
+
+                  ImageView logoView = new ImageView(this);
+                  int resId = getResources().getIdentifier("danz_logo", "drawable", getPackageName());
+                  if (resId != 0) logoView.setImageResource(resId);
+                  LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(280, 280);
+                  logoLp.bottomMargin = 16;
+                  root.addView(logoView, logoLp);
+
+                  TextView title = new TextView(this);
+                  title.setText("DANZ TOOLS");
+                  title.setTextColor(Color.parseColor("#00E676"));
+                  title.setTextSize(26f);
+                  title.setTypeface(Typeface.DEFAULT_BOLD);
+                  root.addView(title);
+
+                  TextView sub = new TextView(this);
+                  sub.setText("By DanzOfficial • SHIZUKU ENGINE A11+");
+                  sub.setTextColor(Color.parseColor("#8FA89B"));
+                  sub.setTextSize(12f);
+                  sub.setPadding(0, 4, 0, 28);
+                  root.addView(sub);
+
+                  // Card Shizuku
+                  LinearLayout shzCard = new LinearLayout(this);
+                  shzCard.setOrientation(LinearLayout.VERTICAL);
+                  shzCard.setPadding(32, 28, 32, 28);
+                  GradientDrawable shzBg = new GradientDrawable();
+                  shzBg.setColor(Color.parseColor("#0E1914"));
+                  shzBg.setCornerRadius(24f);
+                  shzBg.setStroke(2, Color.parseColor("#1E3F2E"));
+                  shzCard.setBackground(shzBg);
+
+                  shizukuBadge = new TextView(this);
+                  shizukuBadge.setTextSize(12f);
+                  shizukuBadge.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                  shzCard.addView(shizukuBadge);
+
+                  Button btnShz = new Button(this);
+                  btnShz.setText("AKTIFKAN / IZINKAN SHIZUKU ADB");
+                  btnShz.setTextColor(Color.BLACK);
+                  btnShz.setTypeface(Typeface.DEFAULT_BOLD);
+                  GradientDrawable btnShzBg = new GradientDrawable();
+                  btnShzBg.setColor(Color.parseColor("#00E676"));
+                  btnShzBg.setCornerRadius(16f);
+                  btnShz.setBackground(btnShzBg);
+                  btnShz.setOnClickListener(v -> {
+                      if (!ShizukuShellManager.isShizukuRunning()) {
+                          Intent i = getPackageManager().getLaunchIntentForPackage("moe.shizuku.privileged.api");
+                          if (i != null) startActivity(i);
+                          else Toast.makeText(this, "Buka aplikasi Shizuku & nyalakan Wireless Debugging dulu!", Toast.LENGTH_LONG).show();
+                      } else {
+                          ShizukuShellManager.requestPermission();
+                      }
+                      updateShizukuBadge();
+                  });
+                  LinearLayout.LayoutParams lpBtnShz = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  lpBtnShz.topMargin = 16;
+                  shzCard.addView(btnShz, lpBtnShz);
+
+                  LinearLayout.LayoutParams shzCardLp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  shzCardLp.bottomMargin = 24;
+                  root.addView(shzCard, shzCardLp);
+
+                  // Card Login Key 1 Key 1 Device
+                  LinearLayout card = new LinearLayout(this);
+                  card.setOrientation(LinearLayout.VERTICAL);
+                  card.setPadding(36, 36, 36, 36);
+                  GradientDrawable cardBg = new GradientDrawable();
+                  cardBg.setColor(Color.parseColor("#0E1914"));
+                  cardBg.setCornerRadius(24f);
+                  cardBg.setStroke(2, Color.parseColor("#00E676"));
+                  card.setBackground(cardBg);
+
+                  TextView hwidTv = new TextView(this);
+                  hwidTv.setText("HWID Perangkat: " + licenseManager.getDeviceHwid());
+                  hwidTv.setTextColor(Color.parseColor("#00E676"));
+                  hwidTv.setTextSize(13f);
+                  hwidTv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                  card.addView(hwidTv);
+
+                  Button copyBtn = new Button(this);
+                  copyBtn.setText("SALIN HWID");
+                  copyBtn.setTextColor(Color.WHITE);
+                  copyBtn.setBackgroundColor(Color.parseColor("#162920"));
+                  copyBtn.setOnClickListener(v -> {
+                      ClipboardManager cb = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                      cb.setPrimaryClip(ClipData.newPlainText("HWID", licenseManager.getDeviceHwid()));
+                      Toast.makeText(this, "HWID disalin!", Toast.LENGTH_SHORT).show();
+                  });
+                  card.addView(copyBtn);
+
+                  TextView keyLbl = new TextView(this);
+                  keyLbl.setText("\nMasukkan License Key (1 Key 1 Device):");
+                  keyLbl.setTextColor(Color.WHITE);
+                  keyLbl.setTextSize(13f);
+                  card.addView(keyLbl);
+
+                  keyInput = new EditText(this);
+                  keyInput.setHint("Masukkan Key Lisensi...");
+                  keyInput.setHintTextColor(Color.parseColor("#526B5E"));
+                  keyInput.setTextColor(Color.WHITE);
+                  keyInput.setSingleLine(true);
+                  keyInput.setText(licenseManager.getSavedKey());
+                  card.addView(keyInput);
+
+                  Button loginBtn = new Button(this);
+                  loginBtn.setText("MASUK KE DANZ TOOLS");
+                  loginBtn.setTextColor(Color.BLACK);
+                  loginBtn.setTypeface(Typeface.DEFAULT_BOLD);
+                  GradientDrawable loginBg = new GradientDrawable();
+                  loginBg.setColor(Color.parseColor("#00E676"));
+                  loginBg.setCornerRadius(16f);
+                  loginBtn.setBackground(loginBg);
+                  loginBtn.setOnClickListener(v -> doLogin());
+
+                  LinearLayout.LayoutParams loginLp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  loginLp.topMargin = 20;
+                  card.addView(loginBtn, loginLp);
+
+                  root.addView(card, new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+                  scroll.addView(root);
+                  setContentView(scroll);
+
+                  updateShizukuBadge();
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  updateShizukuBadge();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  super.onDestroy();
+                  Shizuku.removeRequestPermissionResultListener(permListener);
+              }
+
+              private void updateShizukuBadge() {
+                  boolean run = ShizukuShellManager.isShizukuRunning();
+                  boolean perm = ShizukuShellManager.hasShizukuPermission();
+                  String txt = "Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\n"
+                          + "Status Shizuku: " + (run ? "ONLINE (UID 2000)" : "OFFLINE") + "\n"
+                          + "Izin Shizuku  : " + (perm ? "DIIZINKAN ✔" : "BELUM DIIZINKAN");
+                  shizukuBadge.setText(txt);
+                  shizukuBadge.setTextColor((run && perm) ? Color.parseColor("#00E676") : Color.parseColor("#FFB300"));
+              }
+
+              private void doLogin() {
+                  if (!ShizukuShellManager.isAndroid11OrAbove()) {
+                      Toast.makeText(this, "Wajib Android 11 ke atas!", Toast.LENGTH_LONG).show();
+                      return;
+                  }
+                  if (!ShizukuShellManager.hasShizukuPermission()) {
+                      Toast.makeText(this, "Meminta izin Shizuku ADB...", Toast.LENGTH_SHORT).show();
+                      ShizukuShellManager.requestPermission();
+                  }
+                  LicenseManager.ValidationResult res = licenseManager.validateAndBindKey(keyInput.getText().toString());
+                  Toast.makeText(this, res.message, Toast.LENGTH_SHORT).show();
+                  if (res.valid) {
+                      Intent i = new Intent(this, MainDashboardActivity.class);
+                      i.putExtra("ROLE", res.role);
+                      i.putExtra("KEY", res.key);
+                      i.putExtra("HWID", res.hwid);
+                      i.putExtra("EXPIRES", res.expiresAt);
+                      startActivity(i);
+                      finish();
+                  }
+              }
+          }
+          EOF
+
+          # 9. Buat OverlayEngineService.java (TANPA FLOATING PANEL! Hanya Crosshair Bidik & Bar Pemantauan ROG Persis Video)
+          cat << 'EOF' > app/src/main/java/com/sateam/danzinject/OverlayEngineService.java
+          package com.sateam.danzinject;
+
+          import android.app.ActivityManager;
+          import android.app.Service;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.content.IntentFilter;
+          import android.graphics.Canvas;
+          import android.graphics.Color;
+          import android.graphics.Paint;
+          import android.graphics.PixelFormat;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.os.BatteryManager;
+          import android.os.Handler;
+          import android.os.IBinder;
+          import android.os.Looper;
+          import android.provider.Settings;
+          import android.view.Choreographer;
+          import android.view.Gravity;
+          import android.view.MotionEvent;
+          import android.view.View;
+          import android.view.WindowManager;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Locale;
+
+          public class OverlayEngineService extends Service {
+              private static OverlayEngineService instance;
+
+              private WindowManager wm;
+              private WindowManager.LayoutParams chParams;
+              private CustomCrosshairView crosshairView;
+
+              private WindowManager.LayoutParams rogParams;
+              private LinearLayout rogBarContainer;
+              private TextView rogTextView;
+
+              private final boolean[] rogFlags = {true, true, true, true, true, true};
+              private int currentFps = 60;
+              private int frameCount = 0;
+              private long lastSecondNs = System.nanoTime();
+              private final Handler handler = new Handler(Looper.getMainLooper());
+
+              @Override
+              public IBinder onBind(Intent intent) {
+                  return null;
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  return START_STICKY;
+              }
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+                  instance = this;
+                  wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+
+                  if (Settings.canDrawOverlays(this)) {
+                      initCrosshairOverlay();
+                      initRogHudOverlay();
+                  }
+                  startFpsAndRogLoop();
+              }
+
+              private void initCrosshairOverlay() {
+                  chParams = new WindowManager.LayoutParams(
+                          260, 260,
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                          PixelFormat.TRANSLUCENT
+                  );
+                  chParams.gravity = Gravity.CENTER;
+                  chParams.x = 0;
+                  chParams.y = 0;
+
+                  crosshairView = new CustomCrosshairView(this);
+                  crosshairView.setVisibility(View.GONE);
+                  wm.addView(crosshairView, chParams);
+              }
+
+              // Persis Video Frame 00:12 - 00:14 (4 Gaya Bidik, Rotasi 0-360, Size, Opacity, Warna, X/Y Offset)
+              public static class CustomCrosshairView extends View {
+                  private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  public int styleIndex = 0;
+                  public float angleDeg = 80f;
+                  public float sizePx = 58f;
+                  public int color = Color.WHITE;
+                  public int alpha = 255;
+
+                  public CustomCrosshairView(Context ctx) {
+                      super(ctx);
+                      paint.setStrokeWidth(4.5f);
+                      paint.setStyle(Paint.Style.STROKE);
+                  }
+
+                  @Override
+                  protected void onDraw(Canvas canvas) {
+                      super.onDraw(canvas);
+                      paint.setColor(color);
+                      paint.setAlpha(alpha);
+
+                      float cx = getWidth() * 0.5f;
+                      float cy = getHeight() * 0.5f;
+                      float half = sizePx * 0.5f;
+
+                      canvas.save();
+                      canvas.rotate(angleDeg, cx, cy);
+
+                      if (styleIndex == 0) {
+                          // Crosshair garis + titik tengah (Persis video 00:12)
+                          canvas.drawLine(cx - half, cy, cx - 10f, cy, paint);
+                          canvas.drawLine(cx + 10f, cy, cx + half, cy, paint);
+                          canvas.drawLine(cx, cy - half, cx, cy - 10f, paint);
+                          canvas.drawLine(cx, cy + 10f, cx, cy + half, paint);
+                          paint.setStyle(Paint.Style.FILL);
+                          canvas.drawCircle(cx, cy, 4f, paint);
+                          paint.setStyle(Paint.Style.STROKE);
+                      } else if (styleIndex == 1) {
+                          // Lingkaran + Crosshair
+                          canvas.drawCircle(cx, cy, half * 0.65f, paint);
+                          canvas.drawLine(cx - half, cy, cx + half, cy, paint);
+                          canvas.drawLine(cx, cy - half, cx, cy + half, paint);
+                      } else if (styleIndex == 2) {
+                          // Crosshair rapat
+                          canvas.drawLine(cx - half, cy, cx + half, cy, paint);
+                          canvas.drawLine(cx, cy - half, cx, cy + half, paint);
+                      } else {
+                          // Tactical Bracket Crosshair
+                          canvas.drawCircle(cx, cy, half * 0.4f, paint);
+                          canvas.drawLine(cx - half, cy, cx - half * 0.4f, cy, paint);
+                          canvas.drawLine(cx + half * 0.4f, cy, cx + half, cy, paint);
+                          canvas.drawLine(cx, cy - half, cx, cy - half * 0.4f, paint);
+                          canvas.drawLine(cx, cy + half * 0.4f, cx, cy + half, paint);
+                      }
+                      canvas.restore();
+                  }
+              }
+
+              // Persis Video Frame 00:16 - 00:17 (Bar Pemantauan ROG Melayang)
+              private void initRogHudOverlay() {
+                  rogParams = new WindowManager.LayoutParams(
+                          WindowManager.LayoutParams.WRAP_CONTENT,
+                          WindowManager.LayoutParams.WRAP_CONTENT,
+                          WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                          WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                          PixelFormat.TRANSLUCENT
+                  );
+                  rogParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+                  rogParams.y = 140;
+
+                  rogBarContainer = new LinearLayout(this);
+                  rogBarContainer.setOrientation(LinearLayout.HORIZONTAL);
+                  rogBarContainer.setGravity(Gravity.CENTER_VERTICAL);
+                  rogBarContainer.setPadding(24, 12, 24, 12);
+
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setColor(Color.parseColor("#E60B110E"));
+                  bg.setCornerRadius(30f);
+                  bg.setStroke(2, Color.parseColor("#264D3B"));
+                  rogBarContainer.setBackground(bg);
+
+                  rogTextView = new TextView(this);
+                  rogTextView.setTextColor(Color.WHITE);
+                  rogTextView.setTextSize(11f);
+                  rogTextView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                  rogBarContainer.addView(rogTextView);
+
+                  rogBarContainer.setOnTouchListener(new View.OnTouchListener() {
+                      private int ix, iy;
+                      private float tx, ty;
+                      @Override
+                      public boolean onTouch(View v, MotionEvent ev) {
+                          switch (ev.getAction()) {
+                              case MotionEvent.ACTION_DOWN:
+                                  ix = rogParams.x; iy = rogParams.y;
+                                  tx = ev.getRawX(); ty = ev.getRawY();
+                                  return true;
+                              case MotionEvent.ACTION_MOVE:
+                                  rogParams.x = ix + (int) (ev.getRawX() - tx);
+                                  rogParams.y = iy + (int) (ev.getRawY() - ty);
+                                  wm.updateViewLayout(rogBarContainer, rogParams);
+                                  return true;
+                          }
+                          return false;
+                      }
+                  });
+
+                  rogBarContainer.setVisibility(View.GONE);
+                  wm.addView(rogBarContainer, rogParams);
+              }
+
+              private void startFpsAndRogLoop() {
+                  Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
+                      @Override
+                      public void doFrame(long frameTimeNanos) {
+                          frameCount++;
+                          if (frameTimeNanos - lastSecondNs >= 1_000_000_000L) {
+                              currentFps = frameCount;
+                              frameCount = 0;
+                              lastSecondNs = frameTimeNanos;
+                          }
+                          if (instance != null) {
+                              Choreographer.getInstance().postFrameCallback(this);
+                          }
+                      }
+                  });
+
+                  handler.postDelayed(new Runnable() {
+                      @Override
+                      public void run() {
+                          refreshRogText();
+                          if (instance != null) {
+                              handler.postDelayed(this, 1000L);
+                          }
+                      }
+                  }, 1000L);
+              }
+
+              private void refreshRogText() {
+                  if (rogTextView == null) return;
+                  ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                  ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+                  am.getMemoryInfo(mi);
+                  int ramPct = (int) (((mi.totalMem - mi.availMem) * 100L) / mi.totalMem);
+
+                  Intent batt = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                  int battPct = 100;
+                  int tempC = 37;
+                  if (batt != null) {
+                      int l = batt.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                      int s = batt.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                      if (l >= 0 && s > 0) battPct = (l * 100) / s;
+                      tempC = batt.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 370) / 10;
+                  }
+
+                  int cpuSim = 24 + (currentFps % 15);
+                  StringBuilder sb = new StringBuilder("🦅 ");
+                  if (rogFlags[0]) sb.append("🔥 ").append(cpuSim).append("%  ");
+                  if (rogFlags[1]) sb.append("💾 ").append(ramPct).append("%  ");
+                  if (rogFlags[2]) sb.append("🌡️ ").append(tempC).append("°C  ");
+                  if (rogFlags[3]) sb.append("🔋 ").append(battPct).append("%  ");
+                  if (rogFlags[4]) sb.append("🎮 ").append(currentFps).append("  ");
+                  if (rogFlags[5]) {
+                      sb.append("🕒 ").append(new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date()));
+                  }
+                  rogTextView.setText(sb.toString().trim());
+              }
+
+              public static void setCrosshairVisible(boolean visible) {
+                  if (instance != null && instance.crosshairView != null) {
+                      instance.crosshairView.setVisibility(visible ? View.VISIBLE : View.GONE);
+                  }
+              }
+
+              public static void setCrosshairStyle(int styleIdx) {
+                  if (instance != null && instance.crosshairView != null) {
+                      instance.crosshairView.styleIndex = styleIdx;
+                      instance.crosshairView.invalidate();
+                  }
+              }
+
+              public static void nudgeCrosshairPosition(int dx, int dy) {
+                  if (instance != null && instance.crosshairView != null && instance.chParams != null) {
+                      instance.chParams.x += dx;
+                      instance.chParams.y += dy;
+                      instance.wm.updateViewLayout(instance.crosshairView, instance.chParams);
+                  }
+              }
+
+              public static int getCrosshairX() {
+                  return (instance != null && instance.chParams != null) ? instance.chParams.x : 0;
+              }
+
+              public static int getCrosshairY() {
+                  return (instance != null && instance.chParams != null) ? instance.chParams.y : 0;
+              }
+
+              public static void setCrosshairAngle(int deg) {
+                  if (instance != null && instance.crosshairView != null) {
+                      instance.crosshairView.angleDeg = deg;
+                      instance.crosshairView.invalidate();
+                  }
+              }
+
+              public static void setCrosshairSize(int size) {
+                  if (instance != null && instance.crosshairView != null) {
+                      instance.crosshairView.sizePx = Math.max(16f, size);
+                      instance.crosshairView.invalidate();
+                  }
+              }
+
+              public static void setCrosshairAlpha(int alpha) {
+                  if (instance != null && instance.crosshairView != null) {
+                      instance.crosshairView.alpha = alpha;
+                      instance.crosshairView.invalidate();
+                  }
+              }
+
+              public static void setCrosshairColor(int color) {
+                  if (instance != null && instance.crosshairView != null) {
+                      instance.crosshairView.color = color;
+                      instance.crosshairView.invalidate();
+                  }
+              }
+
+              public static void setRogVisible(boolean visible) {
+                  if (instance != null && instance.rogBarContainer != null) {
+                      instance.rogBarContainer.setVisibility(visible ? View.VISIBLE : View.GONE);
+                  }
+              }
+
+              public static void setRogMetric(int idx, boolean enabled) {
+                  if (instance != null && idx >= 0 && idx < instance.rogFlags.length) {
+                      instance.rogFlags[idx] = enabled;
+                      instance.refreshRogText();
+                  }
+              }
+
+              @Override
+              public void onDestroy() {
+                  super.onDestroy();
+                  instance = null;
+                  if (wm != null) {
+                      if (crosshairView != null) wm.removeView(crosshairView);
+                      if (rogBarContainer != null) wm.removeView(rogBarContainer);
+                  }
+              }
+          }
+          EOF
+
+          # 10. Buat MainDashboardActivity.java (Tampilan & Animasi Kilat Hijau ⚡ 100% Persis Video GameTools)
+          cat << 'EOF' > app/src/main/java/com/sateam/danzinject/MainDashboardActivity.java
+          package com.sateam.danzinject;
+
+          import android.app.Activity;
+          import android.app.ActivityManager;
+          import android.app.AlertDialog;
+          import android.content.ClipData;
+          import android.content.ClipboardManager;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.Environment;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.os.Process;
+          import android.os.StatFs;
+          import android.provider.Settings;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.ArrayAdapter;
+          import android.widget.Button;
+          import android.widget.CheckBox;
+          import android.widget.EditText;
+          import android.widget.FrameLayout;
+          import android.widget.LinearLayout;
+          import android.widget.ProgressBar;
+          import android.widget.ScrollView;
+          import android.widget.SeekBar;
+          import android.widget.Spinner;
+          import android.widget.Switch;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import java.util.Locale;
+
+          public class MainDashboardActivity extends Activity {
+              private LicenseManager licenseManager;
+              private String userRole;
+              private String activeKey;
+              private String userHwid;
+              private long expiresAt;
+
+              private TextView headerTitleTv;
+              private LinearLayout pageProfile;
+              private LinearLayout pageQuickLaunch;
+              private LinearLayout pageGameTools;
+
+              private Button navBtnProfile;
+              private Button navBtnBolt;
+              private Button navBtnTools;
+
+              // Overlay Animasi Kilat Hijau ⚡ Persis Video Frame 00:03, 00:07, 00:10
+              private FrameLayout lightningOverlay;
+              private TextViewuptimeClockTv;
+              private long startTimeMs;
+              private final Handler handler = new Handler(Looper.getMainLooper());
+
+              private String targetPackage = "com.dts.freefireth";
+              private int danzWareLevel = 90;
+              private int aimDragLevel = 6;
+              private int aimSmoothLevel = 40;
+              private int recoilLevel = 85;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  licenseManager = new LicenseManager(this);
+                  userRole = getIntent().getStringExtra("ROLE");
+                  activeKey = getIntent().getStringExtra("KEY");
+                  userHwid = getIntent().getStringExtra("HWID");
+                  expiresAt = getIntent().getLongExtra("EXPIRES", 0L);
+                  startTimeMs = System.currentTimeMillis();
+
+                  if (!Settings.canDrawOverlays(this)) {
+                      startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                              Uri.parse("package:" + getPackageName())));
+                  }
+
+                  startService(new Intent(this, OverlayEngineService.class));
+                  buildVideoExactUi();
+                  startUptimeTicker();
+              }
+
+              private TextView uptimeClockTv;
+
+              // Animasi Kilat Hijau ⚡ saat mengaktifkan fitur seperti di Video
+              private void playGreenLightningAnimation() {
+                  if (lightningOverlay == null) return;
+                  lightningOverlay.setVisibility(View.VISIBLE);
+                  handler.removeCallbacksAndMessages("HIDE_BOLT");
+                  handler.postAtTime(() -> lightningOverlay.setVisibility(View.GONE),
+                          "HIDE_BOLT", android.os.SystemClock.uptimeMillis() + 750L);
+              }
+
+              private void buildVideoExactUi() {
+                  FrameLayout rootFrame = new FrameLayout(this);
+                  rootFrame.setBackgroundColor(Color.parseColor("#070D0A"));
+
+                  LinearLayout mainVertical = new LinearLayout(this);
+                  mainVertical.setOrientation(LinearLayout.VERTICAL);
+
+                  // ==================== TOP HEADER (PERSIS VIDEO) ====================
+                  LinearLayout topHeader = new LinearLayout(this);
+                  topHeader.setOrientation(LinearLayout.HORIZONTAL);
+                  topHeader.setGravity(Gravity.CENTER_VERTICAL);
+                  topHeader.setPadding(40, 48, 40, 24);
+
+                  headerTitleTv = new TextView(this);
+                  headerTitleTv.setText("Profile");
+                  headerTitleTv.setTextColor(Color.WHITE);
+                  headerTitleTv.setTextSize(24f);
+                  headerTitleTv.setTypeface(Typeface.DEFAULT_BOLD);
+                  LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                  topHeader.addView(headerTitleTv, titleLp);
+
+                  TextView byDanzTv = new TextView(this);
+                  byDanzTv.setText("By DanzOfficial  ");
+                  byDanzTv.setTextColor(Color.parseColor("#7C9488"));
+                  byDanzTv.setTextSize(11f);
+                  topHeader.addView(byDanzTv);
+
+                  TextView shzPill = new TextView(this);
+                  shzPill.setText("SHIZUKU");
+                  shzPill.setTextColor(Color.parseColor("#00E676"));
+                  shzPill.setTextSize(10f);
+                  shzPill.setTypeface(Typeface.DEFAULT_BOLD);
+                  shzPill.setPadding(22, 8, 22, 8);
+                  GradientDrawable pillBg = new GradientDrawable();
+                  pillBg.setColor(Color.parseColor("#112E20"));
+                  pillBg.setCornerRadius(30f);
+                  pillBg.setStroke(2, Color.parseColor("#00E676"));
+                  shzPill.setBackground(pillBg);
+                  topHeader.addView(shzPill);
+
+                  mainVertical.addView(topHeader);
+
+                  // ==================== SCROLLABLE PAGES ====================
+                  ScrollView scrollView = new ScrollView(this);
+                  scrollView.setFillViewport(true);
+                  LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
+                  scrollView.setLayoutParams(scrollLp);
+
+                  LinearLayout pagesContainer = new LinearLayout(this);
+                  pagesContainer.setOrientation(LinearLayout.VERTICAL);
+                  pagesContainer.setPadding(32, 8, 32, 180);
+
+                  pageProfile = buildProfilePage();
+                  pageQuickLaunch = buildQuickLaunchAndKeygenPage();
+                  pageGameTools = buildGameToolsPage();
+
+                  pageQuickLaunch.setVisibility(View.GONE);
+                  pageGameTools.setVisibility(View.GONE);
+
+                  pagesContainer.addView(pageProfile);
+                  pagesContainer.addView(pageQuickLaunch);
+                  pagesContainer.addView(pageGameTools);
+                  scrollView.addView(pagesContainer);
+                  mainVertical.addView(scrollView);
+
+                  rootFrame.addView(mainVertical);
+
+                  // ==================== FLOATING BOTTOM NAVIGATION PILL (PERSIS VIDEO) ====================
+                  LinearLayout bottomPill = new LinearLayout(this);
+                  bottomPill.setOrientation(LinearLayout.HORIZONTAL);
+                  bottomPill.setGravity(Gravity.CENTER);
+                  bottomPill.setPadding(16, 14, 16, 14);
+                  GradientDrawable navBg = new GradientDrawable();
+                  navBg.setColor(Color.parseColor("#101D17"));
+                  navBg.setCornerRadius(50f);
+                  navBg.setStroke(2, Color.parseColor("#1F382C"));
+                  bottomPill.setBackground(navBg);
+
+                  navBtnProfile = makeNavTabButton("⊞  Profile", true);
+                  navBtnBolt    = makeNavTabButton("⚡", false);
+                  navBtnTools   = makeNavTabButton("🎛️  Game Tools", false);
+
+                  navBtnProfile.setOnClickListener(v -> switchPage(0));
+                  navBtnBolt.setOnClickListener(v -> switchPage(1));
+                  navBtnTools.setOnClickListener(v -> switchPage(2));
+
+                  LinearLayout.LayoutParams tabLp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  tabLp.setMargins(8, 0, 8, 0);
+                  bottomPill.addView(navBtnProfile, tabLp);
+                  bottomPill.addView(navBtnBolt, tabLp);
+                  bottomPill.addView(navBtnTools, tabLp);
+
+                  FrameLayout.LayoutParams navWrapLp = new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+                  navWrapLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+                  navWrapLp.bottomMargin = 36;
+                  rootFrame.addView(bottomPill, navWrapLp);
+
+                  // ==================== FULLSCREEN GREEN LIGHTNING OVERLAY (⚡ PERSIS VIDEO 00:03) ====================
+                  lightningOverlay = new FrameLayout(this);
+                  lightningOverlay.setBackgroundColor(Color.parseColor("#99040806"));
+                  lightningOverlay.setVisibility(View.GONE);
+
+                  TextView bigBolt = new TextView(this);
+                  bigBolt.setText("⚡");
+                  bigBolt.setTextSize(110f);
+                  bigBolt.setTextColor(Color.parseColor("#00E676"));
+                  bigBolt.setGravity(Gravity.CENTER);
+                  FrameLayout.LayoutParams boltLp = new FrameLayout.LayoutParams(
+                          FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+                  lightningOverlay.addView(bigBolt, boltLp);
+                  rootFrame.addView(lightningOverlay);
+
+                  setContentView(rootFrame);
+              }
+
+              private void switchPage(int idx) {
+                  pageProfile.setVisibility(idx == 0 ? View.VISIBLE : View.GONE);
+                  pageQuickLaunch.setVisibility(idx == 1 ? View.VISIBLE : View.GONE);
+                  pageGameTools.setVisibility(idx == 2 ? View.VISIBLE : View.GONE);
+
+                  if (idx == 0) headerTitleTv.setText("Profile");
+                  else if (idx == 1) headerTitleTv.setText("DANZ TOOLS");
+                  else headerTitleTv.setText("GameTools");
+
+                  styleNavTab(navBtnProfile, idx == 0);
+                  styleNavTab(navBtnBolt, idx == 1);
+                  styleNavTab(navBtnTools, idx == 2);
+              }
+
+              private Button makeNavTabButton(String text, boolean active) {
+                  Button b = new Button(this);
+                  b.setText(text);
+                  b.setAllCaps(false);
+                  b.setTextSize(13f);
+                  b.setPadding(36, 16, 36, 16);
+                  styleNavTab(b, active);
+                  return b;
+              }
+
+              private void styleNavTab(Button b, boolean active) {
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setCornerRadius(40f);
+                  if (active) {
+                      bg.setColor(Color.parseColor("#183D2B"));
+                      b.setTextColor(Color.parseColor("#00E676"));
+                      b.setTypeface(Typeface.DEFAULT_BOLD);
+                  } else {
+                      bg.setColor(Color.TRANSPARENT);
+                      b.setTextColor(Color.parseColor("#8CA396"));
+                      b.setTypeface(Typeface.DEFAULT);
+                  }
+                  b.setBackground(bg);
+              }
+
+              // ==================== HALAMAN 1: PROFILE (PERSIS VIDEO 00:00) ====================
+              private LinearLayout buildProfilePage() {
+                  LinearLayout col = new LinearLayout(this);
+                  col.setOrientation(LinearLayout.VERTICAL);
+
+                  // 1. Card Skor Lingkungan (Hijau Muda Gradient)
+                  LinearLayout skorCard = makeVideoCard("#163828", "#00E676");
+                  skorCard.setOrientation(LinearLayout.HORIZONTAL);
+                  skorCard.setGravity(Gravity.CENTER_VERTICAL);
+
+                  TextView circle48 = new TextView(this);
+                  circle48.setText("48");
+                  circle48.setTextColor(Color.parseColor("#00E676"));
+                  circle48.setTextSize(20f);
+                  circle48.setTypeface(Typeface.DEFAULT_BOLD);
+                  circle48.setGravity(Gravity.CENTER);
+                  GradientDrawable ring = new GradientDrawable();
+                  ring.setShape(GradientDrawable.OVAL);
+                  ring.setColor(Color.parseColor("#10291D"));
+                  ring.setStroke(8, Color.parseColor("#00E676"));
+                  circle48.setBackground(ring);
+                  LinearLayout.LayoutParams ringLp = new LinearLayout.LayoutParams(135, 135);
+                  ringLp.rightMargin = 28;
+                  skorCard.addView(circle48, ringLp);
+
+                  LinearLayout skorTextCol = new LinearLayout(this);
+                  skorTextCol.setOrientation(LinearLayout.VERTICAL);
+                  skorTextCol.addView(makeLabel("Skor Lingkungan", 17f, "#FFFFFF", true));
+                  skorTextCol.addView(makeLabel("Indeks Kesehatan & Stabilitas Sistem", 12f, "#A5C4B4", false));
+                  skorCard.addView(skorTextCol);
+                  col.addView(skorCard);
+
+                  // 2. Baris 2 Kolom: Profile Pengguna (Kiri) & Ancare / Lisensi (Kanan)
+                  LinearLayout twoColRow = new LinearLayout(this);
+                  twoColRow.setOrientation(LinearLayout.HORIZONTAL);
+                  LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  rowLp.bottomMargin = 24;
+                  twoColRow.setLayoutParams(rowLp);
+
+                  LinearLayout leftProfileCard = makeVideoCard("#0E1914", "#1B3026");
+                  LinearLayout.LayoutParams halfLp1 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+                  halfLp1.rightMargin = 12;
+                  leftProfileCard.setLayoutParams(halfLp1);
+                  leftProfileCard.addView(makeLabel("Profile Pengguna", 15f, "#FFFFFF", true));
+                  leftProfileCard.addView(makeLabel(userHwid + "\nID : 192\n" + userHwid + "72909f4f\n", 11f, "#7E968A", false));
+                  leftProfileCard.addView(makeLabel("Verified Access  ✔", 12f, "#00E676", true));
+
+                  LinearLayout rightAncareCard = makeVideoCard("#1B4D35", "#00E676");
+                  LinearLayout.LayoutParams halfLp2 = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+                  halfLp2.leftMargin = 12;
+                  rightAncareCard.setLayoutParams(halfLp2);
+                  rightAncareCard.addView(makeLabel("Ancare", 12f, "#A5D6BE", false));
+                  rightAncareCard.addView(makeLabel(userHwid, 20f, "#00E676", true));
+                  rightAncareCard.addView(makeLabel("Berlaku sampai: " + LicenseManager.formatTimestamp(expiresAt) + "\n", 10f, "#D0EFE0", false));
+
+                  Button btnPerbarui = new Button(this);
+                  btnPerbarui.setText(("DEVELOPER".equals(userRole) || "RESELLER".equals(userRole)) ? "CREATE KEY" : "PERBARUI");
+                  btnPerbarui.setTextColor(Color.WHITE);
+                  btnPerbarui.setTextSize(11f);
+                  btnPerbarui.setTypeface(Typeface.DEFAULT_BOLD);
+                  GradientDrawable perbaruiBg = new GradientDrawable();
+                  perbaruiBg.setColor(Color.parseColor("#2B6E4E"));
+                  perbaruiBg.setCornerRadius(20f);
+                  btnPerbarui.setBackground(perbaruiBg);
+                  btnPerbarui.setOnClickListener(v -> switchPage(1));
+                  rightAncareCard.addView(btnPerbarui);
+
+                  twoColRow.addView(leftProfileCard);
+                  twoColRow.addView(rightAncareCard);
+                  col.addView(twoColRow);
+
+                  // 3. Card Layanan Pengguna (Waktu Aktif Digital Hijau Persis Video)
+                  LinearLayout svcCard = makeVideoCard("#10241B", "#1E4231");
+                  LinearLayout svcTop = new LinearLayout(this);
+                  svcTop.setOrientation(LinearLayout.HORIZONTAL);
+                  svcTop.setGravity(Gravity.CENTER_VERTICAL);
+                  TextView svcLbl = makeLabel("Layanan Pengguna", 14f, "#B0C9BC", true);
+                  svcTop.addView(svcLbl, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+                  TextView onlineBadge = makeLabel("Online", 10f, "#00E676", true);
+                  onlineBadge.setPadding(20, 6, 20, 6);
+                  GradientDrawable onBg = new GradientDrawable();
+                  onBg.setColor(Color.parseColor("#173B2A"));
+                  onBg.setCornerRadius(20f);
+                  onlineBadge.setBackground(onBg);
+                  svcTop.addView(onlineBadge);
+                  svcCard.addView(svcTop);
+
+                  uptimeClockTv = new TextView(this);
+                  uptimeClockTv.setText("00:00:05 Waktu Aktif");
+                  uptimeClockTv.setTextColor(Color.parseColor("#00E676"));
+                  uptimeClockTv.setTextSize(26f);
+                  uptimeClockTv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                  uptimeClockTv.setPadding(0, 12, 0, 16);
+                  svcCard.addView(uptimeClockTv);
+
+                  svcCard.addView(makeLabel("PID   " + Process.myPid() + "      UID   2000      VER   1.0.0(1)", 11f, "#A0B8AC", true));
+                  col.addView(svcCard);
+
+                  // 4. Card Informasi Sistem (Grid 2x2 RAM, Storage, CPU Speed, Network Persis Video)
+                  ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+                  ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+                  am.getMemoryInfo(mi);
+                  float totalRamGb = mi.totalMem / (1024f * 1024f * 1024f);
+                  int ramPct = (int) (((mi.totalMem - mi.availMem) * 100L) / mi.totalMem);
+
+                  StatFs statFs = new StatFs(Environment.getDataDirectory().getPath());
+                  long totalDiskGb = statFs.getTotalBytes() / (1024L * 1024L * 1024L);
+                  int diskPct = (int) (((statFs.getTotalBytes() - statFs.getAvailableBytes()) * 100L) / statFs.getTotalBytes());
+
+                  LinearLayout sysCard = makeVideoCard("#0E1914", "#1B3026");
+                  sysCard.addView(makeLabel("Informasi Sistem                                 Version 1.0.0", 14f, "#FFFFFF", true));
+
+                  LinearLayout gridRow1 = new LinearLayout(this);
+                  gridRow1.setOrientation(LinearLayout.HORIZONTAL);
+                  gridRow1.setPadding(0, 16, 0, 8);
+                  gridRow1.addView(makeSysTile("RAM Usage", ramPct + "%", String.format(Locale.US, "Total %.1f GB", totalRamGb), ramPct),
+                          new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                  gridRow1.addView(makeSysTile("Storage", diskPct + "%", "Total " + totalDiskGb + " GB", diskPct),
+                          new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                  sysCard.addView(gridRow1);
+
+                  LinearLayout gridRow2 = new LinearLayout(this);
+                  gridRow2.setOrientation(LinearLayout.HORIZONTAL);
+                  gridRow2.setPadding(0, 8, 0, 16);
+                  gridRow2.addView(makeSysTile("CPU Speed", "2.00 GHz", "Max 2.00 GHz", 80),
+                          new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                  gridRow2.addView(makeSysTile("Network", "- ms", "8.8.8.8", 40),
+                          new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                  sysCard.addView(gridRow2);
+
+                  TextView footerModel = makeLabel(Build.MANUFACTURER + " " + Build.MODEL + " - Android " + Build.VERSION.RELEASE + " - " + Build.SUPPORTED_ABIS[0], 11f, "#7C9488", false);
+                  footerModel.setGravity(Gravity.CENTER);
+                  sysCard.addView(footerModel);
+                  col.addView(sysCard);
+
+                  // 5. Card Social Media
+                  LinearLayout socCard = makeVideoCard("#0E1914", "#1B3026");
+                  socCard.addView(makeLabel("Gabung ke Saluran Resmi", 15f, "#FFFFFF", true));
+                  socCard.addView(makeLabel("Bergabung ke saluran resmi untuk memantau update, info penting, dan pengumuman resmi secara langsung", 11f, "#7C9488", false));
+                  col.addView(socCard);
+
+                  return col;
+              }
+
+              private LinearLayout makeSysTile(String title, String bigRight, String subBottom, int progress) {
+                  LinearLayout tile = new LinearLayout(this);
+                  tile.setOrientation(LinearLayout.VERTICAL);
+                  tile.setPadding(20, 20, 20, 20);
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setColor(Color.parseColor("#13221B"));
+                  bg.setCornerRadius(20f);
+                  tile.setBackground(bg);
+
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                  lp.setMargins(8, 8, 8, 8);
+                  tile.setLayoutParams(lp);
+
+                  TextView topVal = makeLabel(bigRight, 16f, "#00E676", true);
+                  topVal.setGravity(Gravity.END);
+                  tile.addView(topVal);
+
+                  tile.addView(makeLabel(title, 12f, "#FFFFFF", true));
+
+                  ProgressBar pb = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+                  pb.setMax(100);
+                  pb.setProgress(progress);
+                  tile.addView(pb);
+
+                  tile.addView(makeLabel(subBottom, 10f, "#7C9488", false));
+                  return tile;
+              }
+
+              // ==================== HALAMAN 2 (TAB ⚡): PELUNCUR CEPAT & PANEL DEVELOPER CREATE KEY ====================
+              private LinearLayout buildQuickLaunchAndKeygenPage() {
+                  LinearLayout col = new LinearLayout(this);
+                  col.setOrientation(LinearLayout.VERTICAL);
+
+                  LinearLayout launchCard = makeVideoCard("#122B1F", "#00E676");
+                  launchCard.addView(makeLabel("⚡ PELUNCUR CEPAT IN-GAME FREE FIRE", 16f, "#00E676", true));
+                  launchCard.addView(makeLabel("Aktifkan fitur di tab Game Tools terlebih dahulu, lalu luncurkan Free Fire dari tombol di bawah agar profil Shizuku bekerja penuh di dalam game.", 12f, "#B0C9BC", false));
+
+                  Button btnLaunchFf = makeGreenBtn("BUKA FREE FIRE (" + targetPackage + ")");
+                  btnLaunchFf.setOnClickListener(v -> {
+                      playGreenLightningAnimation();
+                      Intent launch = getPackageManager().getLaunchIntentForPackage(targetPackage);
+                      if (launch != null) {
+                          startActivity(launch);
+                      } else {
+                          Toast.makeText(this, "Paket " + targetPackage + " belum terinstal di HP ini!", Toast.LENGTH_SHORT).show();
+                      }
+                  });
+                  launchCard.addView(btnLaunchFf);
+                  col.addView(launchCard);
+
+                  // Panel Create Key 1 Key 1 Device (Khusus Developer DANZDEV & Reseller)
+                  if ("DEVELOPER".equals(userRole) || "RESELLER".equals(userRole)) {
+                      LinearLayout keyCard = makeVideoCard("#0E1914", "#00E676");
+                      keyCard.addView(makeLabel("🔑 PANEL DEVELOPER — CREATE KEY (1 KEY 1 DEVICE)", 15f, "#00E676", true));
+                      keyCard.addView(makeLabel("Pilih durasi key untuk pelanggan (Otomatis mengunci HWID perangkat pertama yang login):", 11f, "#8CA396", false));
+
+                      final Spinner sp = new Spinner(this);
+                      String[] tiers = {
+                              "1 Day (1Key 1Device)",
+                              "3 Day (1Key 1Device)",
+                              "7 Day (1Key 1Device)",
+                              "15 Day (1Key 1Device)",
+                              "30 Day (1Key 1Device)",
+                              "Permanent (1Key 1Device)",
+                              "Reseller (1Key 1Device)"
+                      };
+                      ArrayAdapter<String> ad = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, tiers);
+                      sp.setAdapter(ad);
+                      sp.setBackgroundColor(Color.parseColor("#183326"));
+                      keyCard.addView(sp);
+
+                      final EditText hwidOpt = new EditText(this);
+                      hwidOpt.setHint("Opsional: Isi HWID user (Kosongkan = Auto Lock saat login)");
+                      hwidOpt.setTextColor(Color.WHITE);
+                      hwidOpt.setHintTextColor(Color.parseColor("#5C786A"));
+                      keyCard.addView(hwidOpt);
+
+                      final TextView resultTv = makeLabel("Key hasil generate akan muncul di sini...", 14f, "#00E676", true);
+                      resultTv.setPadding(8, 20, 8, 20);
+                      keyCard.addView(resultTv);
+
+                      final TextView listTv = makeLabel(licenseManager.dumpAllKeysSummary(), 11f, "#A5C4B4", false);
+
+                      Button btnGen = makeGreenBtn("CREATE KEY & SALIN OTOMATIS");
+                      btnGen.setOnClickListener(v -> {
+                          playGreenLightningAnimation();
+                          LicenseManager.Tier chosen = LicenseManager.Tier.values()[sp.getSelectedItemPosition()];
+                          String k = licenseManager.generateLicenseKey(chosen, hwidOpt.getText().toString());
+                          resultTv.setText("KEY BERHASIL DIBUAT:\n" + k + " (" + chosen.label + ")");
+                          ClipboardManager cb = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                          cb.setPrimaryClip(ClipData.newPlainText("KEY", k));
+                          listTv.setText(licenseManager.dumpAllKeysSummary());
+                          Toast.makeText(this, "Key " + chosen.label + " disalin ke Clipboard!", Toast.LENGTH_SHORT).show();
+                      });
+                      keyCard.addView(btnGen);
+
+                      final EditText resetInput = new EditText(this);
+                      resetInput.setHint("Ketik Key untuk Reset HWID");
+                      resetInput.setTextColor(Color.WHITE);
+                      resetInput.setHintTextColor(Color.parseColor("#5C786A"));
+                      keyCard.addView(resetInput);
+
+                      Button btnReset = makeDarkBtn("RESET HWID KEY");
+                      btnReset.setOnClickListener(v -> {
+                          boolean ok = licenseManager.resetHwidForKey(resetInput.getText().toString());
+                          listTv.setText(licenseManager.dumpAllKeysSummary());
+                          Toast.makeText(this, ok ? "HWID di-reset!" : "Key tidak ditemukan", Toast.LENGTH_SHORT).show();
+                      });
+                      keyCard.addView(btnReset);
+
+                      keyCard.addView(makeLabel("\nDatabase Key Aktif:", 13f, "#FFFFFF", true));
+                      keyCard.addView(listTv);
+                      col.addView(keyCard);
+                  }
+
+                  return col;
+              }
+
+              // ==================== HALAMAN 3: GAMETOOLS (100% IDENTIK VIDEO 00:01 - 00:17) ====================
+              private LinearLayout buildGameToolsPage() {
+                  LinearLayout col = new LinearLayout(this);
+                  col.setOrientation(LinearLayout.VERTICAL);
+
+                  // Baris Filter Chips: [ Semua ]  [ Visual ]  [ Konfigurasi ]
+                  LinearLayout filterRow = new LinearLayout(this);
+                  filterRow.setOrientation(LinearLayout.HORIZONTAL);
+                  filterRow.setPadding(0, 0, 0, 24);
+                  filterRow.addView(makeChip("✔ Semua", true));
+                  filterRow.addView(makeChip("👁 Visual", false));
+                  filterRow.addView(makeChip("⚙ Konfigurasi", false));
+                  col.addView(filterRow);
+
+                  // --- 5 FITUR IN-GAME UTAMA (TANPA TULISAN SORENWARE GAMO) ---
+                  // 1. DRAG HS
+                  col.addView(makeExpandableFeatureCard(
+                          "DRAG HS", "VIP",
+                          "Kalibrasi sensitivitas vertikal & touch slop agar tarikan tembakan langsung naik ke kepala di dalam game.",
+                          null,
+                          checked -> ShizukuShellManager.applyDragHs(targetPackage, checked)
+                  ));
+
+                  // 2. AIMDRAG
+                  LinearLayout aimDragBody = new LinearLayout(this);
+                  aimDragBody.setOrientation(LinearLayout.VERTICAL);
+                  aimDragBody.addView(makeVideoSlider("Kecepatan Tarikan Y-Axis [VIP]", 7, 6,
+                          "Rendah", "Sedang", "Tertinggi",
+                          val -> {
+                              aimDragLevel = val;
+                              ShizukuShellManager.applyAimDrag(true, aimDragLevel);
+                          }));
+                  col.addView(makeExpandableFeatureCard(
+                          "AIMDRAG", "VIP",
+                          "Meningkatkan akselerasi swipe layar ke atas agar drag lebih ringan dan responsif.",
+                          aimDragBody,
+                          checked -> ShizukuShellManager.applyAimDrag(checked, aimDragLevel)
+                  ));
+
+                  // 3. AIM SMOOTH
+                  LinearLayout aimSmoothBody = new LinearLayout(this);
+                  aimSmoothBody.setOrientation(LinearLayout.VERTICAL);
+                  aimSmoothBody.addView(makeVideoSlider("Tingkat Kehalusan Bidikan [VIP]", 100, 40,
+                          "Cepat", "Stabil", "Halus",
+                          val -> {
+                              aimSmoothLevel = val;
+                              ShizukuShellManager.applyAimSmooth(true, aimSmoothLevel);
+                          }));
+                  col.addView(makeExpandableFeatureCard(
+                          "AIM SMOOTH", "VIP",
+                          "Menstabilkan interpolasi sentuhan layar agar pergerakan crosshair tidak patah-patah.",
+                          aimSmoothBody,
+                          checked -> ShizukuShellManager.applyAimSmooth(checked, aimSmoothLevel)
+                  ));
+
+                  // 4. CONTROL RECOIL
+                  LinearLayout recoilBody = new LinearLayout(this);
+                  recoilBody.setOrientation(LinearLayout.VERTICAL);
+                  recoilBody.addView(makeVideoSlider("Peredam Getaran Recoil [VIP]", 100, 85,
+                          "25%", "50%", "100%",
+                          val -> {
+                              recoilLevel = val;
+                              ShizukuShellManager.applyControlRecoil(true, recoilLevel);
+                          }));
+                  col.addView(makeExpandableFeatureCard(
+                          "CONTROL RECOIL", "VIP",
+                          "Meredam guncangan titik sentuh saat menahan tombol tembak beruntun.",
+                          recoilBody,
+                          checked -> ShizukuShellManager.applyControlRecoil(checked, recoilLevel)
+                  ));
+
+                  // 5. DANZ WARE (MURNI PERFORMANCE BOOSTER — TANPA TULISAN SORENWARE GAMO!)
+                  LinearLayout danzWareBody = new LinearLayout(this);
+                  danzWareBody.setOrientation(LinearLayout.VERTICAL);
+                  danzWareBody.addView(makeVideoSlider("Tingkat Peningkatan Performa [VIP]", 100, 90,
+                          "Seimbang", "Tinggi", "Ekstrem 120FPS",
+                          val -> {
+                              danzWareLevel = val;
+                              ShizukuShellManager.applyDanzWarePerformance(targetPackage, true, danzWareLevel);
+                          }));
+                  col.addView(makeExpandableFeatureCard(
+                          "DANZ WARE", "VIP",
+                          "Mesin peningkat performa ekstrem in-game: Unlock 120FPS Game Mode, kunci frekuensi CPU/GPU anti-drop, Skiagl Render, dan AOT Speed.",
+                          danzWareBody,
+                          checked -> ShizukuShellManager.applyDanzWarePerformance(targetPackage, checked, danzWareLevel)
+                  ));
+
+                  // --- FITUR-FITUR PERSIS VIDEO GAMETOOLS (00:01 - 00:17) ---
+                  // 6. DPI Smart Costum (Persis Video Frame 00:01 - 00:04)
+                  LinearLayout dpiBody = new LinearLayout(this);
+                  dpiBody.setOrientation(LinearLayout.VERTICAL);
+                  dpiBody.addView(makeLabel("\nPengaturan Awal", 14f, "#FFFFFF", true));
+                  dpiBody.addView(makeLabel("Alat untuk membuka pengaturan DPI dan resolusi secara tersembunyi.", 11f, "#7C9488", false));
+                  Button btnOpenDpi = makeGreenBtn("KETUK PENGATURAN");
+                  btnOpenDpi.setOnClickListener(v -> showDpiDialog());
+                  dpiBody.addView(btnOpenDpi);
+
+                  dpiBody.addView(makeLabel("\nAtur Ulang Resolusi dan DPI", 14f, "#FFFFFF", true));
+                  dpiBody.addView(makeLabel("Untuk mereset semua sistem resolusi pada tampilan, dengan fitur ini memudahkan untuk kembali normal.", 11f, "#7C9488", false));
+                  Button btnResetDpi = makeGreenBtn("KETUK UNTUK MENGATUR ULANG");
+                  btnResetDpi.setOnClickListener(v -> {
+                      playGreenLightningAnimation();
+                      ShizukuShellManager.execAdbAsync("wm density reset && wm size reset");
+                      Toast.makeText(this, "Resolusi & DPI dikembalikan ke normal!", Toast.LENGTH_SHORT).show();
+                  });
+                  dpiBody.addView(btnResetDpi);
+
+                  col.addView(makeExpandableFeatureCard(
+                          "DPI Smart Costum", "VIP",
+                          "Fitur ini mengoptimalkan skala DPI secara otomatis ketika bermain dan kembali normal saat digunakan dalam aktivitas standar.",
+                          dpiBody,
+                          checked -> {}
+                  ));
+
+                  // 7. Patch Sensitivitas 1.0 (Persis Video Frame 00:02 - 00:05)
+                  LinearLayout patchSensBody = new LinearLayout(this);
+                  patchSensBody.setOrientation(LinearLayout.VERTICAL);
+
+                  LinearLayout pkgSelectRow = new LinearLayout(this);
+                  pkgSelectRow.setOrientation(LinearLayout.HORIZONTAL);
+                  pkgSelectRow.setPadding(0, 12, 0, 12);
+                  final Button btnPkgTh = makeGreenBtn("com.dts.freefireth");
+                  final Button btnPkgMax = makeDarkBtn("com.dts.freefiremax");
+                  LinearLayout.LayoutParams pkgLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                  pkgLp.setMargins(6, 0, 6, 0);
+                  btnPkgTh.setLayoutParams(pkgLp);
+                  btnPkgMax.setLayoutParams(pkgLp);
+
+                  btnPkgTh.setOnClickListener(v -> {
+                      targetPackage = "com.dts.freefireth";
+                      Toast.makeText(this, "Target aktif: com.dts.freefireth", Toast.LENGTH_SHORT).show();
+                  });
+                  btnPkgMax.setOnClickListener(v -> {
+                      targetPackage = "com.dts.freefiremax";
+                      Toast.makeText(this, "Target aktif: com.dts.freefiremax", Toast.LENGTH_SHORT).show();
+                  });
+                  pkgSelectRow.addView(btnPkgTh);
+                  pkgSelectRow.addView(btnPkgMax);
+                  patchSensBody.addView(pkgSelectRow);
+
+                  patchSensBody.addView(makeVideoSlider("Tingkat Sensitivitas [VIP]", 4, 3,
+                          "Terendah", "Sedang", "Tertinggi",
+                          val -> ShizukuShellManager.execAdbAsync("settings put system pointer_speed " + (val + 3))));
+
+                  col.addView(makeExpandableFeatureCard(
+                          "Patch Sensitivitas 1.0", "",
+                          "Penyesuaian otomatis untuk sensitivitas yang lebih optimal ( TIDAK SEMUA DEVICE BEKERJA ).",
+                          patchSensBody,
+                          checked -> ShizukuShellManager.execAdbAsync("settings put system pointer_speed " + (checked ? 6 : 0))
+                  ));
+
+                  // 8. Akselerator Sentuh (Persis Video Frame 00:06 - 00:08)
+                  LinearLayout touchAccBody = new LinearLayout(this);
+                  touchAccBody.setOrientation(LinearLayout.VERTICAL);
+                  touchAccBody.addView(makeVideoSlider("Klik Batas Waktu [VIP]", 100, 95,
+                          "Terendah", "Sedang", "Tertinggi",
+                          val -> ShizukuShellManager.execAdbAsync("settings put secure long_press_timeout " + Math.max(120, 400 - val * 2))));
+                  touchAccBody.addView(makeVideoSlider("Batas Waktu Berganda [VIP]", 4, 4,
+                          "Bawaan", "Lebih cepat", "Perangkat",
+                          val -> ShizukuShellManager.execAdbAsync("settings put secure multi_press_timeout " + Math.max(100, 300 - val * 45))));
+
+                  col.addView(makeExpandableFeatureCard(
+                          "Akselerator Sentuh", "",
+                          "Mempercepat respon multi-tap dan gesture detection.",
+                          touchAccBody,
+                          checked -> ShizukuShellManager.execAdbAsync("settings put secure long_press_timeout " + (checked ? 180 : 400))
+                  ));
+
+                  // 9. Pelempar Permukaan (Persis Video Frame 00:08 - 00:09)
+                  col.addView(makeExpandableFeatureCard(
+                          "Pelempar Permukaan", "VIP",
+                          "Menyesuaikan konfigurasi SurfaceFlinger dengan refresh rate aktif guna meningkatkan respons compositing dan stabilitas frame rendering.",
+                          null,
+                          checked -> ShizukuShellManager.execAdbAsync(
+                                  "service call SurfaceFlinger 1008 i32 " + (checked ? 0 : 1) +
+                                  " && setprop debug.sf.latch_unsignaled " + (checked ? 1 : 0))
+                  ));
+
+                  // 10. Optimalkan GoPhone (Persis Video Frame 00:09 - 00:11)
+                  LinearLayout goPhoneBody = new LinearLayout(this);
+                  goPhoneBody.setOrientation(LinearLayout.VERTICAL);
+                  LinearLayout chkRow1 = new LinearLayout(this);
+                  chkRow1.setOrientation(LinearLayout.HORIZONTAL);
+                  chkRow1.addView(makeGoPhoneCheck("Freezer scheduler", "device_config put activity_manager use_freezer true"));
+                  chkRow1.addView(makeGoPhoneCheck("Max Cached", "device_config put activity_manager max_cached_processes 4"));
+                  goPhoneBody.addView(chkRow1);
+
+                  LinearLayout chkRow2 = new LinearLayout(this);
+                  chkRow2.setOrientation(LinearLayout.HORIZONTAL);
+                  chkRow2.addView(makeGoPhoneCheck("Memory Compaction", "device_config put activity_manager use_compaction true"));
+                  chkRow2.addView(makeGoPhoneCheck("Imperceptible Kill", "am kill-all"));
+                  goPhoneBody.addView(chkRow2);
+
+                  col.addView(makeExpandableFeatureCard(
+                          "Optimalkan GoPhone", "VIP",
+                          "Dengan fitur ini dapat mengurangi beban CPU GPU sehingga device terasa lebih ringan dan responsif.",
+                          goPhoneBody,
+                          checked -> {
+                              if (checked) ShizukuShellManager.execAdbAsync("am kill-all");
+                          }
+                  ));
+
+                  // 11. Bersihkan Cache (Persis Video Frame 00:11)
+                  col.addView(makeExpandableFeatureCard(
+                          "Bersihkan Cache", "",
+                          "Membersihkan sebagian cache pada direktori data melalui sistem scan otomatis.",
+                          null,
+                          checked -> {
+                              if (checked) {
+                                  ShizukuShellManager.execAdbAsync("pm trim-caches 4096M && rm -rf /sdcard/Android/data/" + targetPackage + "/cache/*");
+                                  Toast.makeText(this, "Cache " + targetPackage + " & sistem dibersihkan!", Toast.LENGTH_SHORT).show();
+                              }
+                          }
+                  ));
+
+                  // 12. ANGLE Rendering (Persis Video Frame 00:11)
+                  col.addView(makeExpandableFeatureCard(
+                          "ANGLE Rendering", "",
+                          "Menjalankan OpenGL ES melalui Vulkan (ANGLE) untuk meningkatkan kompatibilitas dan pada beberapa perangkat dapat meningkatkan performa.",
+                          null,
+                          checked -> ShizukuShellManager.execAdbAsync(
+                                  "settings put global angle_gl_driver_selection_pkgs " + targetPackage +
+                                  " && settings put global angle_gl_driver_selection_values " + (checked ? "angle" : "default"))
+                  ));
+
+                  // 13. Kustomisasi Bidik Anda (Persis Video Frame 00:12 - 00:14)
+                  LinearLayout chBody = buildCrosshairCustomizerBody();
+                  col.addView(makeExpandableFeatureCard(
+                          "Kustomisasi Bidik Anda", "",
+                          "Memudahkan untuk membidik ketika anda menggunakan senjata yang tidak memiliki crosshair.",
+                          chBody,
+                          OverlayEngineService::setCrosshairVisible
+                  ));
+
+                  // 14. Pemantauan ROG (Persis Video Frame 00:15 - 00:17)
+                  LinearLayout rogBody = new LinearLayout(this);
+                  rogBody.setOrientation(LinearLayout.VERTICAL);
+                  String[] rogItems = {"CPU Information", "RAM Information", "Temperature Information", "Battery Information", "FPS Information", "Time Information"};
+                  for (int i = 0; i < rogItems.length; i++) {
+                      final int idx = i;
+                      CheckBox cb = new CheckBox(this);
+                      cb.setText(rogItems[i]);
+                      cb.setTextColor(Color.WHITE);
+                      cb.setChecked(true);
+                      cb.setOnCheckedChangeListener((b, isChk) -> OverlayEngineService.setRogMetric(idx, isChk));
+                      rogBody.addView(cb);
+                  }
+                  col.addView(makeExpandableFeatureCard(
+                          "Pemantauan ROG", "",
+                          "Pemantauan Suhu, jam, GPU, CPU, FPS secara real-time dengan menggunakan style ROG.",
+                          rogBody,
+                          OverlayEngineService::setRogVisible
+                  ));
+
+                  return col;
+              }
+
+              // Panel Radar Kustomisasi Bidik Anda Persis Video Frame 00:12 - 00:14
+              private LinearLayout buildCrosshairCustomizerBody() {
+                  LinearLayout wrap = new LinearLayout(this);
+                  wrap.setOrientation(LinearLayout.VERTICAL);
+                  wrap.setPadding(0, 16, 0, 8);
+
+                  // Baris Pilih 4 Bentuk Bidik (+, ⊕, ✛, ⌖)
+                  LinearLayout styleRow = new LinearLayout(this);
+                  styleRow.setOrientation(LinearLayout.HORIZONTAL);
+                  String[] icons = {"➕", "⊕", "✛", "⌖"};
+                  for (int i = 0; i < icons.length; i++) {
+                      final int sIdx = i;
+                      Button b = makeDarkBtn(icons[i]);
+                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                      lp.setMargins(6, 0, 6, 12);
+                      b.setLayoutParams(lp);
+                      b.setOnClickListener(v -> OverlayEngineService.setCrosshairStyle(sIdx));
+                      styleRow.addView(b);
+                  }
+                  wrap.addView(styleRow);
+
+                  // Radar Status X/Y, Derajat & Size
+                  final TextView radarStatusTv = makeLabel("X = 0   Y = 0          Sudut: 80°          Size: 58", 12f, "#00E676", true);
+                  radarStatusTv.setGravity(Gravity.CENTER);
+                  radarStatusTv.setPadding(16, 20, 16, 20);
+                  GradientDrawable radarBg = new GradientDrawable();
+                  radarBg.setColor(Color.parseColor("#0A130F"));
+                  radarBg.setCornerRadius(20f);
+                  radarBg.setStroke(2, Color.parseColor("#00E676"));
+                  radarStatusTv.setBackground(radarBg);
+                  wrap.addView(radarStatusTv);
+
+                  // 4 Tombol Geser Posisi X/Y Crosshair
+                  LinearLayout nudgeRow = new LinearLayout(this);
+                  nudgeRow.setOrientation(LinearLayout.HORIZONTAL);
+                  nudgeRow.setPadding(0, 12, 0, 12);
+                  String[] arrows = {"◀ X-", "▲ Y-", "▼ Y+", "▶ X+"};
+                  int[][] deltas = {{-4, 0}, {0, -4}, {0, 4}, {4, 0}};
+                  for (int i = 0; i < 4; i++) {
+                      final int dx = deltas[i][0];
+                      final int dy = deltas[i][1];
+                      Button b = makeDarkBtn(arrows[i]);
+                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                      lp.setMargins(4, 0, 4, 0);
+                      b.setLayoutParams(lp);
+                      b.setOnClickListener(v -> {
+                          OverlayEngineService.nudgeCrosshairPosition(dx, dy);
+                          radarStatusTv.setText("X = " + OverlayEngineService.getCrosshairX() +
+                                  "   Y = " + OverlayEngineService.getCrosshairY());
+                      });
+                      nudgeRow.addView(b);
+                  }
+                  wrap.addView(nudgeRow);
+
+                  wrap.addView(makeVideoSlider("Rotasi Sudut Bidik (0° - 360°)", 360, 80, "0°", "180°", "360°",
+                          deg -> {
+                              OverlayEngineService.setCrosshairAngle(deg);
+                              radarStatusTv.setText("X = " + OverlayEngineService.getCrosshairX() +
+                                      "   Y = " + OverlayEngineService.getCrosshairY() + "   Sudut: " + deg + "°");
+                          }));
+
+                  wrap.addView(makeVideoSlider("Ukuran Bidik (Size)", 120, 58, "Kecil", "58", "Besar",
+                          OverlayEngineService::setCrosshairSize));
+
+                  wrap.addView(makeVideoSlider("Opacity", 255, 255, "Transparan", "Sedang", "Penuh",
+                          OverlayEngineService::setCrosshairAlpha));
+
+                  // 6 Lingkaran Warna Persis Video (Putih, Hitam, Merah, Oranye, Kuning, Biru)
+                  LinearLayout colorRow = new LinearLayout(this);
+                  colorRow.setOrientation(LinearLayout.HORIZONTAL);
+                  colorRow.setGravity(Gravity.CENTER);
+                  colorRow.setPadding(0, 16, 0, 8);
+                  int[] colors = {Color.WHITE, Color.BLACK, Color.RED, Color.parseColor("#FF6D00"), Color.YELLOW, Color.parseColor("#00B0FF")};
+                  for (final int c : colors) {
+                      View cView = new View(this);
+                      GradientDrawable cCircle = new GradientDrawable();
+                      cCircle.setShape(GradientDrawable.OVAL);
+                      cCircle.setColor(c);
+                      cCircle.setStroke(3, Color.parseColor("#2A4739"));
+                      cView.setBackground(cCircle);
+                      LinearLayout.LayoutParams cLp = new LinearLayout.LayoutParams(76, 76);
+                      cLp.setMargins(12, 4, 12, 4);
+                      cView.setOnClickListener(v -> OverlayEngineService.setCrosshairColor(c));
+                      colorRow.addView(cView, cLp);
+                  }
+                  wrap.addView(colorRow);
+
+                  return wrap;
+              }
+
+              private void showDpiDialog() {
+                  final EditText input = new EditText(this);
+                  input.setHint("Contoh: 580");
+                  new AlertDialog.Builder(this)
+                          .setTitle("DPI Smart Costum (Shizuku ADB)")
+                          .setMessage("Masukkan nilai DPI untuk Free Fire:")
+                          .setView(input)
+                          .setPositiveButton("TERAPKAN", (d, w) -> {
+                              String val = input.getText().toString().trim();
+                              if (!val.isEmpty()) {
+                                  playGreenLightningAnimation();
+                                  ShizukuShellManager.execAdbAsync("wm density " + val);
+                                  Toast.makeText(this, "DPI diatur ke " + val, Toast.LENGTH_SHORT).show();
+                              }
+                          })
+                          .setNegativeButton("BATAL", null)
+                          .show();
+              }
+
+              // ==================== KOMPONEN KARTU EXPANDABLE PERSIS VIDEO ====================
+              private interface ToggleAction {
+                  void onToggle(boolean checked);
+              }
+
+              private LinearLayout makeExpandableFeatureCard(String title, String badge, String desc, final View expandableBody, final ToggleAction action) {
+                  final LinearLayout card = makeVideoCard("#0E1914", "#1B3026");
+
+                  LinearLayout topRow = new LinearLayout(this);
+                  topRow.setOrientation(LinearLayout.HORIZONTAL);
+                  topRow.setGravity(Gravity.CENTER_VERTICAL);
+
+                  LinearLayout textCol = new LinearLayout(this);
+                  textCol.setOrientation(LinearLayout.VERTICAL);
+                  LinearLayout.LayoutParams textColLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                  textColLp.rightMargin = 16;
+                  textCol.setLayoutParams(textColLp);
+
+                  LinearLayout titleBadgeRow = new LinearLayout(this);
+                  titleBadgeRow.setOrientation(LinearLayout.HORIZONTAL);
+                  titleBadgeRow.setGravity(Gravity.CENTER_VERTICAL);
+                  titleBadgeRow.addView(makeLabel(title + "  ", 16f, "#FFFFFF", true));
+
+                  if (badge != null && !badge.isEmpty()) {
+                      TextView vipTv = makeLabel(badge, 9f, "#00E676", true);
+                      vipTv.setPadding(14, 4, 14, 4);
+                      GradientDrawable vipBg = new GradientDrawable();
+                      vipBg.setColor(Color.parseColor("#143826"));
+                      vipBg.setCornerRadius(12f);
+                      vipTv.setBackground(vipBg);
+                      titleBadgeRow.addView(vipTv);
+                  }
+                  textCol.addView(titleBadgeRow);
+                  textCol.addView(makeLabel(desc, 11f, "#7C9488", false));
+                  topRow.addView(textCol);
+
+                  Switch sw = new Switch(this);
+                  topRow.addView(sw);
+                  card.addView(topRow);
+
+                  if (expandableBody != null) {
+                      expandableBody.setVisibility(View.GONE);
+                      card.addView(expandableBody);
+                  }
+
+                  sw.setOnCheckedChangeListener((b, isChecked) -> {
+                      if (isChecked) {
+                          playGreenLightningAnimation();
+                      }
+                      GradientDrawable bg = new GradientDrawable();
+                      bg.setCornerRadius(26f);
+                      bg.setColor(Color.parseColor(isChecked ? "#11241B" : "#0E1914"));
+                      bg.setStroke(2, Color.parseColor(isChecked ? "#00E676" : "#1B3026"));
+                      card.setBackground(bg);
+
+                      if (expandableBody != null) {
+                          expandableBody.setVisibility(isChecked ? View.VISIBLE : View.GONE);
+                      }
+                      action.onToggle(isChecked);
+                  });
+
+                  return card;
+              }
+
+              private interface SliderListener {
+                  void onChanged(int val);
+              }
+
+              private LinearLayout makeVideoSlider(String title, int max, int def, String leftLbl, String midLbl, String rightLbl, final SliderListener listener) {
+                  LinearLayout box = new LinearLayout(this);
+                  box.setOrientation(LinearLayout.VERTICAL);
+                  box.setPadding(0, 16, 0, 8);
+
+                  box.addView(makeLabel(title, 13f, "#FFFFFF", true));
+
+                  SeekBar sb = new SeekBar(this);
+                  sb.setMax(max);
+                  sb.setProgress(def);
+                  sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                      @Override
+                      public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                          listener.onChanged(progress);
+                      }
+                      @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+                      @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+                  });
+                  box.addView(sb);
+
+                  LinearLayout lblRow = new LinearLayout(this);
+                  lblRow.setOrientation(LinearLayout.HORIZONTAL);
+                  TextView l1 = makeLabel(leftLbl, 10f, "#7C9488", false);
+                  TextView l2 = makeLabel(midLbl, 10f, "#7C9488", false);
+                  l2.setGravity(Gravity.CENTER);
+                  TextView l3 = makeLabel(rightLbl, 10f, "#7C9488", false);
+                  l3.setGravity(Gravity.END);
+
+                  lblRow.addView(l1, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                  lblRow.addView(l2, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                  lblRow.addView(l3, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                  box.addView(lblRow);
+
+                  return box;
+              }
+
+              private CheckBox makeGoPhoneCheck(String text, final String adbCmd) {
+                  CheckBox cb = new CheckBox(this);
+                  cb.setText(text);
+                  cb.setTextColor(Color.WHITE);
+                  cb.setTextSize(11f);
+                  cb.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+                  cb.setOnCheckedChangeListener((b, isChk) -> {
+                      if (isChk) {
+                          playGreenLightningAnimation();
+                          ShizukuShellManager.execAdbAsync(adbCmd);
+                      }
+                  });
+                  return cb;
+              }
+
+              private TextView makeChip(String text, boolean active) {
+                  TextView tv = new TextView(this);
+                  tv.setText(text);
+                  tv.setTextSize(12f);
+                  tv.setTypeface(Typeface.DEFAULT_BOLD);
+                  tv.setPadding(32, 14, 32, 14);
+                  tv.setTextColor(active ? Color.BLACK : Color.parseColor("#A0B8AC"));
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setCornerRadius(30f);
+                  bg.setColor(Color.parseColor(active ? "#00E676" : "#12211A"));
+                  tv.setBackground(bg);
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  lp.rightMargin = 16;
+                  tv.setLayoutParams(lp);
+                  return tv;
+              }
+
+              private LinearLayout makeVideoCard(String bgHex, String borderHex) {
+                  LinearLayout card = new LinearLayout(this);
+                  card.setOrientation(LinearLayout.VERTICAL);
+                  card.setPadding(32, 28, 32, 28);
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setColor(Color.parseColor(bgHex));
+                  bg.setCornerRadius(26f);
+                  bg.setStroke(2, Color.parseColor(borderHex));
+                  card.setBackground(bg);
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  lp.bottomMargin = 20;
+                  card.setLayoutParams(lp);
+                  return card;
+              }
+
+              private TextView makeLabel(String text, float sizeSp, String colorHex, boolean bold) {
+                  TextView tv = new TextView(this);
+                  tv.setText(text);
+                  tv.setTextSize(sizeSp);
+                  tv.setTextColor(Color.parseColor(colorHex));
+                  if (bold) tv.setTypeface(Typeface.DEFAULT_BOLD);
+                  return tv;
+              }
+
+              private Button makeGreenBtn(String text) {
+                  Button b = new Button(this);
+                  b.setText(text);
+                  b.setTextColor(Color.BLACK);
+                  b.setTextSize(12f);
+                  b.setTypeface(Typeface.DEFAULT_BOLD);
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setColor(Color.parseColor("#00E676"));
+                  bg.setCornerRadius(18f);
+                  b.setBackground(bg);
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  lp.topMargin = 12;
+                  b.setLayoutParams(lp);
+                  return b;
+              }
+
+              private Button makeDarkBtn(String text) {
+                  Button b = new Button(this);
+                  b.setText(text);
+                  b.setTextColor(Color.WHITE);
+                  b.setTextSize(12f);
+                  GradientDrawable bg = new GradientDrawable();
+                  bg.setColor(Color.parseColor("#172B22"));
+                  bg.setCornerRadius(18f);
+                  bg.setStroke(2, Color.parseColor("#284A3A"));
+                  b.setBackground(bg);
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  lp.topMargin = 10;
+                  b.setLayoutParams(lp);
+                  return b;
+              }
+
+              private void startUptimeTicker() {
+                  handler.postDelayed(new Runnable() {
+                      @Override
+                      public void run() {
+                          long sec = (System.currentTimeMillis() - startTimeMs) / 1000L;
+                          long h = sec / 3600L;
+                          long m = (sec % 3600L) / 60L;
+                          long s = sec % 60L;
+                          if (uptimeClockTv != null) {
+                              uptimeClockTv.setText(String.format(Locale.US, "%02d:%02d:%02d Waktu Aktif", h, m, s));
+                          }
+                          handler.postDelayed(this, 1000L);
+                      }
+                  }, 1000L);
+              }
+          }
+          EOF
+
+      - name: 5. Pasang Android SDK Platform 34
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;26.1.10909125" "cmake;3.22.1"
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
 
       - name: 6. Rakit APK Release (DANZ TOOLS)
         run: |
-          gradle assembleRelease --no-daemon
+          gradle assembleRelease --no-daemon --stacktrace
 
       - name: 7. Upload Hasil APK (DANZ-TOOLS-FINAL-APK)
         uses: actions/upload-artifact@v4

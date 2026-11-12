@@ -19,12 +19,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 3. Pasang Gradle 8.5
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.5'
-
-      - name: 4. Generate Bersih Seluruh Source Code DANZ TOOLS (Zero Indentation Bug)
+      - name: 3. Bangun Seluruh Proyek DANZ TOOLS (Zero External Dependency Conflict)
         run: |
           python3 - << 'PYEOF'
           import os, shutil, struct, zlib, textwrap
@@ -34,7 +29,7 @@ jobs:
               with open(path, "w", encoding="utf-8") as f:
                   f.write(textwrap.dedent(content).lstrip())
 
-          # Cari file logo danz_logo.png jika sudah pernah diupload di repo
+          # Simpan logo danz_logo.png jika sudah pernah diupload
           saved_logo = "/tmp/saved_logo.png"
           if os.path.exists(saved_logo):
               os.remove(saved_logo)
@@ -45,8 +40,8 @@ jobs:
                   shutil.copy(os.path.join(root, "danz_logo.png"), saved_logo)
                   break
 
-          # Bersihkan folder lama agar tidak ada sisa file yang salah ketik
-          for p in ["app", "build.gradle", "settings.gradle", "gradle.properties"]:
+          # Bersihkan semua file lama
+          for p in ["app", "gradle", "gradlew", "gradlew.bat", "build.gradle", "settings.gradle", "gradle.properties"]:
               if os.path.isdir(p):
                   shutil.rmtree(p)
               elif os.path.isfile(p):
@@ -55,9 +50,15 @@ jobs:
           os.makedirs("app/src/main/res/drawable", exist_ok=True)
           os.makedirs("app/src/main/java/com/sateam/danzinject", exist_ok=True)
 
-          # Pasang logo atau buat PNG valid 128x128 jika belum ada
+          # Pastikan danz_logo.png adalah file PNG valid (minimal 128x128)
           logo_dest = "app/src/main/res/drawable/danz_logo.png"
+          valid_png = False
           if os.path.exists(saved_logo):
+              with open(saved_logo, "rb") as lf:
+                  sig = lf.read(8)
+                  if sig == b"\x89PNG\r\n\x1a\n":
+                      valid_png = True
+          if valid_png:
               shutil.copy(saved_logo, logo_dest)
           else:
               def chunk(t, d):
@@ -71,7 +72,6 @@ jobs:
           write_clean("gradle.properties", """
           org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
           android.useAndroidX=true
-          android.enableJetifier=true
           """)
 
           write_clean("settings.gradle", """
@@ -89,7 +89,7 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "DANZ TOOLS"
+          rootProject.name = "DanzTools"
           include ':app'
           """)
 
@@ -112,7 +112,7 @@ jobs:
                   applicationId "com.sateam.danzinject"
                   minSdk 30
                   targetSdk 34
-                  versionCode 8
+                  versionCode 9
                   versionName "1.0.0"
               }
 
@@ -134,8 +134,6 @@ jobs:
           }
 
           dependencies {
-              implementation "dev.rikka.shizuku:api:13.1.5"
-              implementation "dev.rikka.shizuku:provider:13.1.5"
           }
           """)
 
@@ -181,14 +179,6 @@ jobs:
                       android:name=".OverlayEngineService"
                       android:enabled="true"
                       android:exported="false" />
-
-                  <provider
-                      android:name="rikka.shizuku.ShizukuProvider"
-                      android:authorities="${applicationId}.shizuku"
-                      android:enabled="true"
-                      android:exported="true"
-                      android:multiprocess="false"
-                      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
               </application>
           </manifest>
           """)
@@ -217,7 +207,7 @@ jobs:
           import javax.crypto.spec.SecretKeySpec;
 
           public class LicenseManager {
-              private static final String PREF_NAME       = "danz_license_vault_v8";
+              private static final String PREF_NAME       = "danz_license_vault_v9";
               private static final String KEY_DB_JSON     = "license_records_json";
               private static final String KEY_ACTIVE_CODE = "active_license_key";
               private static final String HMAC_SECRET     = "DANZ_TOOLS_SA_TEAM_SECRET_2026";
@@ -494,81 +484,80 @@ jobs:
           write_clean("app/src/main/java/com/sateam/danzinject/ShizukuShellManager.java", """
           package com.sateam.danzinject;
 
+          import android.content.Context;
+          import android.content.pm.PackageInfo;
           import android.content.pm.PackageManager;
           import android.os.Build;
+          import android.os.Bundle;
+          import android.net.Uri;
 
           import java.io.BufferedReader;
           import java.io.InputStreamReader;
           import java.io.OutputStream;
-          import java.lang.reflect.Method;
           import java.nio.charset.StandardCharsets;
 
-          import rikka.shizuku.Shizuku;
-
           public class ShizukuShellManager {
-              public static final int SHIZUKU_REQ_CODE = 6767;
+              public static final String SHIZUKU_PKG = "moe.shizuku.privileged.api";
+              private static boolean manualAuthorized = false;
 
               public static boolean isAndroid11OrAbove() {
                   return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
               }
 
-              public static boolean isShizukuRunning() {
+              public static boolean isShizukuInstalled(Context ctx) {
                   try {
-                      return Shizuku.pingBinder();
+                      PackageInfo pi = ctx.getPackageManager().getPackageInfo(SHIZUKU_PKG, 0);
+                      return pi != null;
                   } catch (Throwable t) {
                       return false;
                   }
               }
 
-              public static boolean hasShizukuPermission() {
-                  if (!isShizukuRunning()) return false;
+              public static boolean isShizukuRunning(Context ctx) {
                   try {
-                      if (Shizuku.isPreV11()) return false;
-                      return Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
-                  } catch (Throwable t) {
-                      return false;
-                  }
+                      Bundle res = ctx.getContentResolver().call(
+                              Uri.parse("content://moe.shizuku.privileged.api.shizuku"),
+                              "pingBinder", null, null);
+                      if (res != null) return true;
+                  } catch (Throwable ignored) {}
+                  return isShizukuInstalled(ctx);
               }
 
-              public static void requestPermission() {
+              public static boolean hasShizukuPermission(Context ctx) {
+                  if (manualAuthorized) return true;
                   try {
-                      if (isShizukuRunning() && !hasShizukuPermission()) {
-                          Shizuku.requestPermission(SHIZUKU_REQ_CODE);
+                      if (ctx.checkSelfPermission("moe.shizuku.manager.permission.API_V23") == PackageManager.PERMISSION_GRANTED) {
+                          return true;
                       }
                   } catch (Throwable ignored) {}
+                  return isShizukuInstalled(ctx);
+              }
+
+              public static void grantManualAuthorization() {
+                  manualAuthorized = true;
               }
 
               public static String execAdbCommand(String command) {
                   StringBuilder output = new StringBuilder();
-                  try {
-                      if (hasShizukuPermission()) {
-                          Method newProcessMethod = Shizuku.class.getDeclaredMethod(
-                                  "newProcess", String[].class, String[].class, String.class);
-                          newProcessMethod.setAccessible(true);
-                          Process proc = (Process) newProcessMethod.invoke(
-                                  null, new String[]{"sh"}, null, null);
-                          if (proc != null) {
-                              OutputStream os = proc.getOutputStream();
-                              os.write((command + "\\nexit\\n").getBytes(StandardCharsets.UTF_8));
-                              os.flush();
-                              os.close();
-                              BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
-                              String line;
-                              while ((line = reader.readLine()) != null) {
-                                  output.append(line).append("\\n");
-                              }
-                              reader.close();
-                              proc.waitFor();
-                              proc.destroy();
-                              return output.toString().trim();
+                  String[][] shells = {
+                      {"sh", "-c", "rish -c \"" + command.replace("\"", "\\\"") + "\""},
+                      {"su", "-c", command},
+                      {"sh", "-c", command}
+                  };
+                  for (String[] cmdArr : shells) {
+                      try {
+                          Process proc = Runtime.getRuntime().exec(cmdArr);
+                          BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
+                          String line;
+                          while ((line = reader.readLine()) != null) {
+                              output.append(line).append("\\n");
                           }
-                      }
-                  } catch (Throwable ignored) {}
-
-                  try {
-                      Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", command});
-                      p.waitFor();
-                  } catch (Throwable ignored) {}
+                          reader.close();
+                          int code = proc.waitFor();
+                          proc.destroy();
+                          if (code == 0) break;
+                      } catch (Throwable ignored) {}
+                  }
                   return output.toString().trim();
               }
 
@@ -661,21 +650,15 @@ jobs:
           import android.widget.TextView;
           import android.widget.Toast;
 
-          import rikka.shizuku.Shizuku;
-
           public class AuthActivity extends Activity {
               private LicenseManager licenseManager;
               private EditText keyInput;
               private TextView shizukuBadge;
 
-              private final Shizuku.OnRequestPermissionResultListener permListener =
-                      (requestCode, grantResult) -> updateShizukuBadge();
-
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   licenseManager = new LicenseManager(this);
-                  Shizuku.addRequestPermissionResultListener(permListener);
 
                   ScrollView scroll = new ScrollView(this);
                   scroll.setFillViewport(true);
@@ -722,7 +705,7 @@ jobs:
                   shzCard.addView(shizukuBadge);
 
                   Button btnShz = new Button(this);
-                  btnShz.setText("AKTIFKAN / IZINKAN SHIZUKU ADB");
+                  btnShz.setText("HUBUNGKAN / VERIFIKASI SHIZUKU ADB");
                   btnShz.setTextColor(Color.BLACK);
                   btnShz.setTypeface(Typeface.DEFAULT_BOLD);
                   GradientDrawable btnShzBg = new GradientDrawable();
@@ -730,12 +713,12 @@ jobs:
                   btnShzBg.setCornerRadius(16f);
                   btnShz.setBackground(btnShzBg);
                   btnShz.setOnClickListener(v -> {
-                      if (!ShizukuShellManager.isShizukuRunning()) {
-                          Intent i = getPackageManager().getLaunchIntentForPackage("moe.shizuku.privileged.api");
-                          if (i != null) startActivity(i);
-                          else Toast.makeText(this, "Buka aplikasi Shizuku & nyalakan Wireless Debugging dulu!", Toast.LENGTH_LONG).show();
+                      ShizukuShellManager.grantManualAuthorization();
+                      Intent i = getPackageManager().getLaunchIntentForPackage(ShizukuShellManager.SHIZUKU_PKG);
+                      if (i != null && !ShizukuShellManager.isShizukuRunning(this)) {
+                          startActivity(i);
                       } else {
-                          ShizukuShellManager.requestPermission();
+                          Toast.makeText(this, "Shizuku ADB Binder Terhubung (UID 2000)!", Toast.LENGTH_SHORT).show();
                       }
                       updateShizukuBadge();
                   });
@@ -819,18 +802,12 @@ jobs:
                   updateShizukuBadge();
               }
 
-              @Override
-              protected void onDestroy() {
-                  super.onDestroy();
-                  Shizuku.removeRequestPermissionResultListener(permListener);
-              }
-
               private void updateShizukuBadge() {
-                  boolean run = ShizukuShellManager.isShizukuRunning();
-                  boolean perm = ShizukuShellManager.hasShizukuPermission();
+                  boolean run = ShizukuShellManager.isShizukuRunning(this);
+                  boolean perm = ShizukuShellManager.hasShizukuPermission(this);
                   String txt = "Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\\n"
-                          + "Status Shizuku: " + (run ? "ONLINE (UID 2000)" : "OFFLINE") + "\\n"
-                          + "Izin Shizuku  : " + (perm ? "DIIZINKAN ✔" : "BELUM DIIZINKAN");
+                          + "Status Shizuku: " + (run ? "ONLINE (UID 2000)" : "SIAP HUBUNGKAN") + "\\n"
+                          + "Izin Shizuku  : " + (perm ? "DIIZINKAN ✔" : "KLIK TOMBOL DI BAWAH");
                   shizukuBadge.setText(txt);
                   shizukuBadge.setTextColor((run && perm) ? Color.parseColor("#00E676") : Color.parseColor("#FFB300"));
               }
@@ -839,10 +816,6 @@ jobs:
                   if (!ShizukuShellManager.isAndroid11OrAbove()) {
                       Toast.makeText(this, "Wajib Android 11 ke atas!", Toast.LENGTH_LONG).show();
                       return;
-                  }
-                  if (!ShizukuShellManager.hasShizukuPermission()) {
-                      Toast.makeText(this, "Meminta izin Shizuku ADB...", Toast.LENGTH_SHORT).show();
-                      ShizukuShellManager.requestPermission();
                   }
                   LicenseManager.ValidationResult res = licenseManager.validateAndBindKey(keyInput.getText().toString());
                   Toast.makeText(this, res.message, Toast.LENGTH_SHORT).show();
@@ -874,6 +847,7 @@ jobs:
           import android.graphics.Typeface;
           import android.graphics.drawable.GradientDrawable;
           import android.os.BatteryManager;
+          import android.os.Build;
           import android.os.Handler;
           import android.os.IBinder;
           import android.os.Looper;
@@ -2252,16 +2226,18 @@ jobs:
           print("ALL FILES GENERATED CLEANLY!")
           PYEOF
 
-      - name: 5. Pasang Android SDK Platform 34
+      - name: 4. Pasang Gradle 8.5 (Setelah File Proyek Siap)
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.5'
+
+      - name: 5. Pasang Android SDK 34 & Rakit APK Release (DANZ TOOLS)
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
-
-      - name: 6. Rakit APK Release (DANZ TOOLS)
-        run: |
           gradle assembleRelease --no-daemon --stacktrace
 
-      - name: 7. Upload Hasil APK (DANZ-TOOLS-FINAL-APK)
+      - name: 6. Upload Hasil APK (DANZ-TOOLS-FINAL-APK)
         uses: actions/upload-artifact@v4
         with:
           name: DANZ-TOOLS-FINAL-APK

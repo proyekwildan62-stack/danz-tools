@@ -19,7 +19,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: 3. Bangun Seluruh Proyek DANZ TOOLS (Zero External Dependency Conflict)
+      - name: 3. Bangun Seluruh Proyek DANZ TOOLS (Raw String Anti-Potong)
         run: |
           python3 - << 'PYEOF'
           import os, shutil, struct, zlib, textwrap
@@ -40,7 +40,7 @@ jobs:
                   shutil.copy(os.path.join(root, "danz_logo.png"), saved_logo)
                   break
 
-          # Bersihkan semua file lama
+          # Bersihkan file lama
           for p in ["app", "gradle", "gradlew", "gradlew.bat", "build.gradle", "settings.gradle", "gradle.properties"]:
               if os.path.isdir(p):
                   shutil.rmtree(p)
@@ -50,13 +50,12 @@ jobs:
           os.makedirs("app/src/main/res/drawable", exist_ok=True)
           os.makedirs("app/src/main/java/com/sateam/danzinject", exist_ok=True)
 
-          # Pastikan danz_logo.png adalah file PNG valid (minimal 128x128)
+          # Pastikan danz_logo.png adalah PNG murni (minimal 128x128)
           logo_dest = "app/src/main/res/drawable/danz_logo.png"
           valid_png = False
           if os.path.exists(saved_logo):
               with open(saved_logo, "rb") as lf:
-                  sig = lf.read(8)
-                  if sig == b"\x89PNG\r\n\x1a\n":
+                  if lf.read(8) == b"\x89PNG\r\n\x1a\n":
                       valid_png = True
           if valid_png:
               shutil.copy(saved_logo, logo_dest)
@@ -69,12 +68,12 @@ jobs:
               with open(logo_dest, "wb") as f:
                   f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
-          write_clean("gradle.properties", """
+          write_clean("gradle.properties", r"""
           org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           """)
 
-          write_clean("settings.gradle", """
+          write_clean("settings.gradle", r"""
           pluginManagement {
               repositories {
                   google()
@@ -93,13 +92,13 @@ jobs:
           include ':app'
           """)
 
-          write_clean("build.gradle", """
+          write_clean("build.gradle", r"""
           plugins {
               id 'com.android.application' version '8.2.2' apply false
           }
           """)
 
-          write_clean("app/build.gradle", """
+          write_clean("app/build.gradle", r"""
           plugins {
               id 'com.android.application'
           }
@@ -112,7 +111,7 @@ jobs:
                   applicationId "com.sateam.danzinject"
                   minSdk 30
                   targetSdk 34
-                  versionCode 9
+                  versionCode 10
                   versionName "1.0.0"
               }
 
@@ -137,7 +136,7 @@ jobs:
           }
           """)
 
-          write_clean("app/src/main/AndroidManifest.xml", """
+          write_clean("app/src/main/AndroidManifest.xml", r"""
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -183,7 +182,7 @@ jobs:
           </manifest>
           """)
 
-          write_clean("app/src/main/java/com/sateam/danzinject/LicenseManager.java", """
+          write_clean("app/src/main/java/com/sateam/danzinject/LicenseManager.java", r"""
           package com.sateam.danzinject;
 
           import android.content.Context;
@@ -207,7 +206,7 @@ jobs:
           import javax.crypto.spec.SecretKeySpec;
 
           public class LicenseManager {
-              private static final String PREF_NAME       = "danz_license_vault_v9";
+              private static final String PREF_NAME       = "danz_license_vault_v10";
               private static final String KEY_DB_JSON     = "license_records_json";
               private static final String KEY_ACTIVE_CODE = "active_license_key";
               private static final String HMAC_SECRET     = "DANZ_TOOLS_SA_TEAM_SECRET_2026";
@@ -481,20 +480,18 @@ jobs:
           }
           """)
 
-          write_clean("app/src/main/java/com/sateam/danzinject/ShizukuShellManager.java", """
+          write_clean("app/src/main/java/com/sateam/danzinject/ShizukuShellManager.java", r"""
           package com.sateam.danzinject;
 
           import android.content.Context;
           import android.content.pm.PackageInfo;
           import android.content.pm.PackageManager;
+          import android.net.Uri;
           import android.os.Build;
           import android.os.Bundle;
-          import android.net.Uri;
 
           import java.io.BufferedReader;
           import java.io.InputStreamReader;
-          import java.io.OutputStream;
-          import java.nio.charset.StandardCharsets;
 
           public class ShizukuShellManager {
               public static final String SHIZUKU_PKG = "moe.shizuku.privileged.api";
@@ -540,7 +537,7 @@ jobs:
               public static String execAdbCommand(String command) {
                   StringBuilder output = new StringBuilder();
                   String[][] shells = {
-                      {"sh", "-c", "rish -c \"" + command.replace("\"", "\\\"") + "\""},
+                      {"sh", "-c", "rish -c '" + command.replace("'", "") + "'"},
                       {"su", "-c", command},
                       {"sh", "-c", command}
                   };
@@ -550,7 +547,7 @@ jobs:
                           BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
                           String line;
                           while ((line = reader.readLine()) != null) {
-                              output.append(line).append("\\n");
+                              output.append(line).append("\n");
                           }
                           reader.close();
                           int code = proc.waitFor();
@@ -595,32 +592,32 @@ jobs:
                       if (enable) {
                           String downscale = (boostLevel >= 80) ? "0.85" : (boostLevel >= 50 ? "0.90" : "disabled");
                           StringBuilder cmd = new StringBuilder();
-                          cmd.append("cmd game mode performance ").append(targetPkg).append(";\\n");
-                          cmd.append("cmd game set --mode 2 --downscale ").append(downscale).append(" --fps 120 ").append(targetPkg).append(";\\n");
-                          cmd.append("cmd power set-fixed-performance-mode-enabled true;\\n");
-                          cmd.append("cmd thermalservice override-status 0;\\n");
-                          cmd.append("setprop debug.sf.latch_unsignaled 1;\\n");
-                          cmd.append("setprop debug.sf.disable_backpressure 1;\\n");
-                          cmd.append("setprop debug.hwui.renderer skiagl;\\n");
-                          cmd.append("setprop debug.egl.hw 1;\\n");
-                          cmd.append("setprop debug.performance.tuning 1;\\n");
-                          cmd.append("settings put global window_animation_scale 0.0;\\n");
-                          cmd.append("settings put global transition_animation_scale 0.0;\\n");
-                          cmd.append("settings put global animator_duration_scale 0.0;\\n");
-                          cmd.append("cmd package compile -m speed-profile -f ").append(targetPkg).append(";\\n");
-                          cmd.append("am kill-all;\\n");
-                          cmd.append("pm trim-caches 4096M;\\n");
+                          cmd.append("cmd game mode performance ").append(targetPkg).append(";\n");
+                          cmd.append("cmd game set --mode 2 --downscale ").append(downscale).append(" --fps 120 ").append(targetPkg).append(";\n");
+                          cmd.append("cmd power set-fixed-performance-mode-enabled true;\n");
+                          cmd.append("cmd thermalservice override-status 0;\n");
+                          cmd.append("setprop debug.sf.latch_unsignaled 1;\n");
+                          cmd.append("setprop debug.sf.disable_backpressure 1;\n");
+                          cmd.append("setprop debug.hwui.renderer skiagl;\n");
+                          cmd.append("setprop debug.egl.hw 1;\n");
+                          cmd.append("setprop debug.performance.tuning 1;\n");
+                          cmd.append("settings put global window_animation_scale 0.0;\n");
+                          cmd.append("settings put global transition_animation_scale 0.0;\n");
+                          cmd.append("settings put global animator_duration_scale 0.0;\n");
+                          cmd.append("cmd package compile -m speed-profile -f ").append(targetPkg).append(";\n");
+                          cmd.append("am kill-all;\n");
+                          cmd.append("pm trim-caches 4096M;\n");
                           execAdbCommand(cmd.toString());
                       } else {
                           StringBuilder restore = new StringBuilder();
-                          restore.append("cmd game mode standard ").append(targetPkg).append(";\\n");
-                          restore.append("cmd power set-fixed-performance-mode-enabled false;\\n");
-                          restore.append("cmd thermalservice reset;\\n");
-                          restore.append("setprop debug.sf.latch_unsignaled 0;\\n");
-                          restore.append("setprop debug.sf.disable_backpressure 0;\\n");
-                          restore.append("settings put global window_animation_scale 1.0;\\n");
-                          restore.append("settings put global transition_animation_scale 1.0;\\n");
-                          restore.append("settings put global animator_duration_scale 1.0;\\n");
+                          restore.append("cmd game mode standard ").append(targetPkg).append(";\n");
+                          restore.append("cmd power set-fixed-performance-mode-enabled false;\n");
+                          restore.append("cmd thermalservice reset;\n");
+                          restore.append("setprop debug.sf.latch_unsignaled 0;\n");
+                          restore.append("setprop debug.sf.disable_backpressure 0;\n");
+                          restore.append("settings put global window_animation_scale 1.0;\n");
+                          restore.append("settings put global transition_animation_scale 1.0;\n");
+                          restore.append("settings put global animator_duration_scale 1.0;\n");
                           execAdbCommand(restore.toString());
                       }
                   }).start();
@@ -628,7 +625,7 @@ jobs:
           }
           """)
 
-          write_clean("app/src/main/java/com/sateam/danzinject/AuthActivity.java", """
+          write_clean("app/src/main/java/com/sateam/danzinject/AuthActivity.java", r"""
           package com.sateam.danzinject;
 
           import android.app.Activity;
@@ -760,7 +757,7 @@ jobs:
                   card.addView(copyBtn);
 
                   TextView keyLbl = new TextView(this);
-                  keyLbl.setText("\\nMasukkan License Key (1 Key 1 Device):");
+                  keyLbl.setText("\nMasukkan License Key (1 Key 1 Device):");
                   keyLbl.setTextColor(Color.WHITE);
                   keyLbl.setTextSize(13f);
                   card.addView(keyLbl);
@@ -805,8 +802,8 @@ jobs:
               private void updateShizukuBadge() {
                   boolean run = ShizukuShellManager.isShizukuRunning(this);
                   boolean perm = ShizukuShellManager.hasShizukuPermission(this);
-                  String txt = "Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\\n"
-                          + "Status Shizuku: " + (run ? "ONLINE (UID 2000)" : "SIAP HUBUNGKAN") + "\\n"
+                  String txt = "Android " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")\n"
+                          + "Status Shizuku: " + (run ? "ONLINE (UID 2000)" : "SIAP HUBUNGKAN") + "\n"
                           + "Izin Shizuku  : " + (perm ? "DIIZINKAN ✔" : "KLIK TOMBOL DI BAWAH");
                   shizukuBadge.setText(txt);
                   shizukuBadge.setTextColor((run && perm) ? Color.parseColor("#00E676") : Color.parseColor("#FFB300"));
@@ -832,7 +829,7 @@ jobs:
           }
           """)
 
-          write_clean("app/src/main/java/com/sateam/danzinject/OverlayEngineService.java", """
+          write_clean("app/src/main/java/com/sateam/danzinject/OverlayEngineService.java", r"""
           package com.sateam.danzinject;
 
           import android.app.ActivityManager;
@@ -1164,7 +1161,7 @@ jobs:
           }
           """)
 
-          write_clean("app/src/main/java/com/sateam/danzinject/MainDashboardActivity.java", """
+          write_clean("app/src/main/java/com/sateam/danzinject/MainDashboardActivity.java", r"""
           package com.sateam.danzinject;
 
           import android.app.Activity;
@@ -1454,7 +1451,7 @@ jobs:
                   halfLp1.rightMargin = 12;
                   leftProfileCard.setLayoutParams(halfLp1);
                   leftProfileCard.addView(makeLabel("Profile Pengguna", 15f, "#FFFFFF", true));
-                  leftProfileCard.addView(makeLabel(userHwid + "\\nID : 192\\n" + userHwid + "72909f4f\\n", 11f, "#7E968A", false));
+                  leftProfileCard.addView(makeLabel(userHwid + "\nID : 192\n" + userHwid + "72909f4f\n", 11f, "#7E968A", false));
                   leftProfileCard.addView(makeLabel("Verified Access  ✔", 12f, "#00E676", true));
 
                   LinearLayout rightAncareCard = makeVideoCard("#1B4D35", "#00E676");
@@ -1463,7 +1460,7 @@ jobs:
                   rightAncareCard.setLayoutParams(halfLp2);
                   rightAncareCard.addView(makeLabel("Ancare", 12f, "#A5D6BE", false));
                   rightAncareCard.addView(makeLabel(userHwid, 20f, "#00E676", true));
-                  rightAncareCard.addView(makeLabel("Berlaku sampai: " + LicenseManager.formatTimestamp(expiresAt) + "\\n", 10f, "#D0EFE0", false));
+                  rightAncareCard.addView(makeLabel("Berlaku sampai: " + LicenseManager.formatTimestamp(expiresAt) + "\n", 10f, "#D0EFE0", false));
 
                   Button btnPerbarui = new Button(this);
                   btnPerbarui.setText(("DEVELOPER".equals(userRole) || "RESELLER".equals(userRole)) ? "CREATE KEY" : "PERBARUI");
@@ -1638,7 +1635,7 @@ jobs:
                           playGreenLightningAnimation();
                           LicenseManager.Tier chosen = LicenseManager.Tier.values()[sp.getSelectedItemPosition()];
                           String k = licenseManager.generateLicenseKey(chosen, hwidOpt.getText().toString());
-                          resultTv.setText("KEY BERHASIL DIBUAT:\\n" + k + " (" + chosen.label + ")");
+                          resultTv.setText("KEY BERHASIL DIBUAT:\n" + k + " (" + chosen.label + ")");
                           ClipboardManager cb = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                           cb.setPrimaryClip(ClipData.newPlainText("KEY", k));
                           listTv.setText(licenseManager.dumpAllKeysSummary());
@@ -1660,7 +1657,7 @@ jobs:
                       });
                       keyCard.addView(btnReset);
 
-                      keyCard.addView(makeLabel("\\nDatabase Key Aktif:", 13f, "#FFFFFF", true));
+                      keyCard.addView(makeLabel("\nDatabase Key Aktif:", 13f, "#FFFFFF", true));
                       keyCard.addView(listTv);
                       col.addView(keyCard);
                   }
@@ -1749,13 +1746,13 @@ jobs:
 
                   LinearLayout dpiBody = new LinearLayout(this);
                   dpiBody.setOrientation(LinearLayout.VERTICAL);
-                  dpiBody.addView(makeLabel("\\nPengaturan Awal", 14f, "#FFFFFF", true));
+                  dpiBody.addView(makeLabel("\nPengaturan Awal", 14f, "#FFFFFF", true));
                   dpiBody.addView(makeLabel("Alat untuk membuka pengaturan DPI dan resolusi secara tersembunyi.", 11f, "#7C9488", false));
                   Button btnOpenDpi = makeGreenBtn("KETUK PENGATURAN");
                   btnOpenDpi.setOnClickListener(v -> showDpiDialog());
                   dpiBody.addView(btnOpenDpi);
 
-                  dpiBody.addView(makeLabel("\\nAtur Ulang Resolusi dan DPI", 14f, "#FFFFFF", true));
+                  dpiBody.addView(makeLabel("\nAtur Ulang Resolusi dan DPI", 14f, "#FFFFFF", true));
                   dpiBody.addView(makeLabel("Untuk mereset semua sistem resolusi pada tampilan, dengan fitur ini memudahkan untuk kembali normal.", 11f, "#7C9488", false));
                   Button btnResetDpi = makeGreenBtn("KETUK UNTUK MENGATUR ULANG");
                   btnResetDpi.setOnClickListener(v -> {
@@ -2223,10 +2220,10 @@ jobs:
               }
           }
           """)
-          print("ALL FILES GENERATED CLEANLY!")
+          print("ALL FILES GENERATED WITH RAW STRING 100% CLEAN!")
           PYEOF
 
-      - name: 4. Pasang Gradle 8.5 (Setelah File Proyek Siap)
+      - name: 4. Pasang Gradle 8.5
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
